@@ -6,6 +6,7 @@ import { runTurn } from "@zer-agent/agent-core";
 import { DeepSeekProvider } from "@zer-agent/llm-core";
 import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, readDeepSeekApiKey } from "./config.js";
+import { getFinalAssistantMessage } from "./conversation.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
@@ -74,6 +75,7 @@ async function main() {
         model,
         input
       });
+      ui.beginTurn();
       try {
         const systemPrompt = [config.systemPrompt, config.shellContext, toolInventoryPrompt, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
         const result = await runTurn({
@@ -91,12 +93,17 @@ async function main() {
               message: "message" in event ? event.message.content : undefined,
               error: "error" in event ? event.error.message : undefined
             });
-            ui.renderEvent(event);
+            ui.renderTurnProgress(event);
           }
         });
         session.messages = result.messages;
         session.model = model;
         store.save(session);
+        ui.endTurn();
+        const finalAssistantMessage = getFinalAssistantMessage(result.messages);
+        if (finalAssistantMessage) {
+          ui.renderAssistantMessage(finalAssistantMessage.content);
+        }
         logger.info("turn.success", {
           sessionId: session.id,
           messageCount: session.messages.length
@@ -104,6 +111,7 @@ async function main() {
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         session.messages.pop();
+        ui.endTurn();
         logger.error("turn.failure", {
           sessionId: session.id,
           model,

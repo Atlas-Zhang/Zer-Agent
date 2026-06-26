@@ -4,6 +4,9 @@ import { completeInput, DEFAULT_COMMANDS } from "./commands.js";
 import { bold, colorize, dim } from "./theme.js";
 
 export class TerminalUi {
+  private turnActive = false;
+  private currentStatus = "";
+
   private readonly rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -19,43 +22,85 @@ export class TerminalUi {
     process.stdout.write(`${dim("Commands:")} ${colorize("green", "/help")} ${colorize("green", "/new")} ${colorize("green", "/resume <id>")} ${colorize("green", "/model <name>")} ${colorize("green", "/session")} ${colorize("green", "/tools")} ${colorize("green", "/logs")}\n\n`);
   }
 
-  renderEvent(event: AgentEvent): void {
+  beginTurn(): void {
+    this.turnActive = true;
+    this.updateTurnStatus("thinking...");
+  }
+
+  renderTurnProgress(event: AgentEvent): void {
     switch (event.type) {
       case "assistant":
-        process.stdout.write(`${colorize("cyan", "assistant>")} ${event.message.content}\n`);
-        break;
-      case "tool-call":
-        process.stdout.write(`${colorize("magenta", "tool>")} ${bold(event.toolName)} ${dim(JSON.stringify(event.args))}\n`);
-        break;
-      case "tool-result":
-        process.stdout.write(`${colorize(event.result.isError ? "red" : "green", "tool-result>")} ${bold(event.toolName)}${event.result.isError ? colorize("red", " [error]") : ""}\n${event.result.content}\n`);
-        if (event.result.citations?.length) {
-          process.stdout.write(`${colorize("yellow", "citations>")}\n`);
-          for (const citation of event.result.citations) {
-            process.stdout.write(`${dim("-")} ${citation.title}: ${colorize("blue", citation.url)}\n`);
-          }
+        if (event.message.content.trim()) {
+          this.updateTurnStatus("thinking...");
         }
         break;
+      case "tool-call":
+        this.updateTurnStatus(`thinking... using ${event.toolName}`);
+        break;
+      case "tool-result":
+        this.updateTurnStatus(
+          event.result.isError
+            ? `thinking... ${event.toolName} failed`
+            : `thinking... processed ${event.toolName}`
+        );
+        break;
       case "error":
-        process.stderr.write(`${colorize("red", "error>")} ${event.error.message}\n`);
+        this.updateTurnStatus(`thinking... handling error`);
         break;
     }
   }
 
+  renderAssistantMessage(message: string): void {
+    process.stdout.write(`${colorize("cyan", "assistant>")} ${message}\n`);
+  }
+
+  endTurn(): void {
+    if (!this.turnActive) {
+      return;
+    }
+
+    this.clearStatusLine();
+    this.turnActive = false;
+    this.currentStatus = "";
+  }
+
   info(message: string): void {
+    this.endTurn();
     process.stdout.write(`${dim(message)}\n`);
   }
 
   warn(message: string): void {
+    this.endTurn();
     process.stdout.write(`${colorize("yellow", "warn>")} ${message}\n`);
   }
 
   error(message: string): void {
+    this.endTurn();
     process.stderr.write(`${colorize("red", "error>")} ${message}\n`);
   }
 
   close(): void {
+    this.endTurn();
     this.rl.close();
+  }
+
+  private updateTurnStatus(message: string): void {
+    this.currentStatus = message;
+    if (!process.stdout.isTTY) {
+      process.stdout.write(`${dim(message)}\n`);
+      return;
+    }
+
+    this.clearStatusLine();
+    process.stdout.write(dim(message));
+  }
+
+  private clearStatusLine(): void {
+    if (!process.stdout.isTTY) {
+      return;
+    }
+
+    process.stdout.write("\r\u001b[2K");
   }
 }
 
