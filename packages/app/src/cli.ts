@@ -8,7 +8,7 @@ import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, readDeepSeekApiKey } from "./config.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
-import { createBuiltInTools } from "./tools.js";
+import { createBuiltInTools, describeAvailableTools } from "./tools.js";
 
 async function main() {
   const cwd = process.cwd();
@@ -26,6 +26,7 @@ async function main() {
   let session = store.create(config.model, cwd);
   let model = config.model;
   const tools = createBuiltInTools({ cwd, config });
+  const toolInventoryPrompt = describeAvailableTools(tools);
 
   ui.renderBanner(session.id, model);
 
@@ -60,7 +61,7 @@ async function main() {
 
       session.messages.push({ role: "user", content: input });
       try {
-        const systemPrompt = [config.systemPrompt, config.shellContext, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
+        const systemPrompt = [config.systemPrompt, config.shellContext, toolInventoryPrompt, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
         const result = await runTurn({
           provider,
           model,
@@ -104,7 +105,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /tools /quit");
       return true;
     case "/new":
       {
@@ -140,6 +141,12 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
     }
     case "/session":
       context.ui.info(`Session ${context.session.id} | model=${context.model} | cwd=${context.cwd}`);
+      return true;
+    case "/tools":
+      context.ui.info(describeAvailableTools(createBuiltInTools({
+        cwd: context.cwd,
+        config: loadAppConfig(context.cwd)
+      })));
       return true;
     default:
       context.ui.info(`Unknown command: ${command}`);

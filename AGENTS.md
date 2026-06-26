@@ -28,6 +28,8 @@
 ## Validation
 - Run `npm run build` after structural TypeScript changes.
 - Run `npm test` for behavior changes once the build succeeds.
+- After each feature implementation, verify the feature directly with at least one focused functional check in addition to build/test success.
+- Do not consider a feature complete until its user-visible behavior has been exercised and confirmed.
 
 ## Runtime Configuration
 - Keep non-secret defaults documented in `.env`.

@@ -50,3 +50,19 @@ test("createBuiltInTools only registers external search tools when configured", 
   assert(withKeys.includes("web_search"));
   assert(withKeys.includes("news_search"));
 });
+
+test("describeAvailableTools includes current tool inventory", () => {
+  const description = internalForTesting.describeAvailableTools([
+    {
+      name: "weather",
+      description: "Fetch current weather and today's forecast for a location.",
+      input: {},
+      async execute() {
+        return { content: "ok" };
+      }
+    }
+  ]);
+
+  assert.match(description, /Available tools in this session/);
+  assert.match(description, /weather/);
+});

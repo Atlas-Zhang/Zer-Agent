@@ -223,10 +223,24 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
   return tools;
 }
 
+export function describeAvailableTools(tools: AgentTool[]): string {
+  const lines = [
+    "Available tools in this session:"
+  ];
+
+  for (const tool of tools) {
+    lines.push(`- ${tool.name}: ${tool.description}`);
+  }
+
+  lines.push("If a tool is listed here, use it when appropriate instead of claiming it is unavailable.");
+  return lines.join("\n");
+}
+
 export const internalForTesting = {
   normalizeWindowsCommand,
   assertSafeShellCommand,
-  resolveSafePath
+  resolveSafePath,
+  describeAvailableTools
 };
 
 async function runProcess(command: string, args: string[], timeout = 30000, cwd?: string) {
