@@ -12,7 +12,7 @@
     "dev": "node packages/app/dist/cli.js",
     "install:hooks": "git config core.hooksPath .githooks",
     "start": "node packages/app/dist/cli.js",
-    "test": "node --test packages/*/dist/**/*.test.js"
+    "test": "node scripts/test.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

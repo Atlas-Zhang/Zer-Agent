@@ -83,10 +83,11 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
       async execute(args) {
         const command = toStringArg(args.command);
         const timeoutMs = typeof args.timeoutMs === "number" ? args.timeoutMs : 30000;
+        const normalizedCommand = process.platform === "win32" ? normalizeWindowsCommand(command) : command;
         const shell = process.platform === "win32" ? "powershell.exe" : "sh";
         const shellArgs = process.platform === "win32"
-          ? ["-NoProfile", "-Command", command]
-          : ["-lc", command];
+          ? ["-NoProfile", "-Command", normalizedCommand]
+          : ["-lc", normalizedCommand];
 
         const { stdout, stderr } = await runProcess(shell, shellArgs, timeoutMs, context.cwd);
         return { content: [stdout, stderr].filter(Boolean).join("\n").trim() || "(no output)" };
@@ -112,6 +113,10 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     }
   ];
 }
+
+export const internalForTesting = {
+  normalizeWindowsCommand
+};
 
 async function runProcess(command: string, args: string[], timeout = 30000, cwd?: string) {
   return execFileAsync(command, args, {
@@ -148,4 +153,31 @@ function toStringArg(value: unknown, fallback?: string): string {
   }
 
   throw new Error("Expected string argument.");
+}
+
+function normalizeWindowsCommand(command: string): string {
+  const trimmed = command.trim();
+
+  const simpleCatHeadMatch = trimmed.match(/^cat\s+([^\s|]+)\s+2>\/dev\/null\s+\|\s+head\s+-([0-9]+)$/);
+  if (simpleCatHeadMatch) {
+    const [, filePath, lineCount] = simpleCatHeadMatch;
+    return `Get-Content -Path '${escapeSingleQuotes(filePath)}' -TotalCount ${lineCount} -ErrorAction SilentlyContinue`;
+  }
+
+  const catHeadMatch = trimmed.match(/^cat\s+([^\s|]+)\s+\|\s+head\s+-([0-9]+)$/);
+  if (catHeadMatch) {
+    const [, filePath, lineCount] = catHeadMatch;
+    return `Get-Content -Path '${escapeSingleQuotes(filePath)}' -TotalCount ${lineCount}`;
+  }
+
+  if (trimmed.startsWith("cat ")) {
+    const filePath = trimmed.slice(4).trim();
+    return `Get-Content -Path '${escapeSingleQuotes(filePath)}'`;
+  }
+
+  return command;
+}
+
+function escapeSingleQuotes(value: string): string {
+  return value.replace(/'/g, "''");
 }

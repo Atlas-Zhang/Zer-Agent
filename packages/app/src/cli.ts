@@ -59,7 +59,7 @@ async function main() {
       }
 
       session.messages.push({ role: "user", content: input });
-      const systemPrompt = [config.systemPrompt, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
+      const systemPrompt = [config.systemPrompt, config.shellContext, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
       const result = await runTurn({
         provider,
         model,

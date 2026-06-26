@@ -7,6 +7,7 @@ export type AppConfig = {
   sessionDir: string;
   systemPrompt: string;
   deepSeekBaseUrl: string;
+  shellContext: string;
 };
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -14,6 +15,18 @@ const DEFAULT_SYSTEM_PROMPT = [
   "Be concise, tool-driven, and explicit about file and shell actions.",
   "Respect AGENTS.md instructions loaded from the current project."
 ].join(" ");
+
+const DEFAULT_SHELL_CONTEXT = process.platform === "win32"
+  ? [
+      "Runtime shell: Windows PowerShell.",
+      "Prefer built-in tools like read_file, list_files, and search_text for repository inspection.",
+      "If you use run_shell, write PowerShell syntax rather than bash syntax.",
+      "Do not use bash redirection such as 2>/dev/null, pipes to head, or utilities like cat unless you first verify they exist in this shell."
+    ].join(" ")
+  : [
+      "Runtime shell: POSIX sh.",
+      "Prefer built-in tools like read_file, list_files, and search_text for repository inspection."
+    ].join(" ");
 
 let envLoaded = false;
 
@@ -28,7 +41,8 @@ export function loadAppConfig(cwd: string): AppConfig {
     model: process.env.ZER_AGENT_MODEL ?? fileConfig.model ?? "deepseek-v4-flash",
     sessionDir: resolve(cwd, process.env.ZER_AGENT_SESSION_DIR ?? fileConfig.sessionDir ?? ".zer-agent/sessions"),
     systemPrompt: process.env.ZER_AGENT_SYSTEM_PROMPT ?? fileConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    deepSeekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? fileConfig.deepSeekBaseUrl ?? "https://api.deepseek.com"
+    deepSeekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? fileConfig.deepSeekBaseUrl ?? "https://api.deepseek.com",
+    shellContext: fileConfig.shellContext ?? DEFAULT_SHELL_CONTEXT
   };
 }
 
