@@ -1,6 +1,7 @@
 import readline from "node:readline/promises";
 import type { AgentEvent } from "@zer-agent/agent-core";
 import { completeInput, DEFAULT_COMMANDS } from "./commands.js";
+import { renderMarkdownToTerminal } from "./markdown.js";
 import { bold, colorize, dim } from "./theme.js";
 
 export class TerminalUi {
@@ -67,7 +68,13 @@ export class TerminalUi {
   }
 
   renderAssistantMessage(message: string): void {
-    process.stdout.write(`${colorize("cyan", "assistant>")} ${message}\n`);
+    const width = process.stdout.columns ?? 100;
+    const rendered = renderMarkdownToTerminal(message, Math.max(60, width - 4));
+    process.stdout.write(`${colorize("cyan", "assistant>")} ${firstRenderedLine(rendered)}\n`);
+    const remaining = rendered.split("\n").slice(1).join("\n");
+    if (remaining) {
+      process.stdout.write(`${remaining}\n`);
+    }
   }
 
   endTurn(): void {
@@ -189,11 +196,20 @@ export class TerminalUi {
 
 export const internalForTesting = {
   completeInput,
-  formatToolBadge
+  formatToolBadge,
+  renderMarkdownToTerminal
 };
 
 const SPINNER_FRAMES = ["-", "\\", "|", "/"] as const;
 
 function formatToolBadge(toolName: string): string {
   return `[${toolName}]`;
+}
+
+function firstRenderedLine(rendered: string): string {
+  const [firstLine, ...rest] = rendered.split("\n");
+  if (rest.length === 0) {
+    return firstLine ?? "";
+  }
+  return firstLine ?? "";
 }
