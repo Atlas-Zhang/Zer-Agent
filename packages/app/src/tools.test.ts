@@ -24,6 +24,7 @@ test("createBuiltInTools only registers external search tools when configured", 
   const baseConfig: AppConfig = {
     model: "deepseek-v4-flash",
     sessionDir: "sessions",
+    logDir: "logs",
     systemPrompt: "prompt",
     deepSeekBaseUrl: "https://api.deepseek.com",
     shellContext: "shell",

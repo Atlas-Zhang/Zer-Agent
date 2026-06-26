@@ -6,6 +6,7 @@ import { runTurn } from "@zer-agent/agent-core";
 import { DeepSeekProvider } from "@zer-agent/llm-core";
 import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, readDeepSeekApiKey } from "./config.js";
+import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
 import { createBuiltInTools, describeAvailableTools } from "./tools.js";
@@ -14,9 +15,11 @@ async function main() {
   const cwd = process.cwd();
   const config = loadAppConfig(cwd);
   mkdirSync(config.sessionDir, { recursive: true });
+  mkdirSync(config.logDir, { recursive: true });
 
   const ui = new TerminalUi();
   const store = new SessionStore(config.sessionDir);
+  const logger = new AppLogger(config.logDir);
   const provider = new DeepSeekProvider({
     apiKey: readDeepSeekApiKey(),
     baseUrl: config.deepSeekBaseUrl,
@@ -27,6 +30,12 @@ async function main() {
   let model = config.model;
   const tools = createBuiltInTools({ cwd, config });
   const toolInventoryPrompt = describeAvailableTools(tools);
+  logger.info("app.start", {
+    cwd,
+    model,
+    sessionId: session.id,
+    toolNames: tools.map((tool) => tool.name)
+  });
 
   ui.renderBanner(session.id, model);
 
@@ -60,6 +69,11 @@ async function main() {
       }
 
       session.messages.push({ role: "user", content: input });
+      logger.info("turn.start", {
+        sessionId: session.id,
+        model,
+        input
+      });
       try {
         const systemPrompt = [config.systemPrompt, config.shellContext, toolInventoryPrompt, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
         const result = await runTurn({
@@ -70,15 +84,32 @@ async function main() {
           tools,
           continueOnUnknownTool: true,
           onEvent(event) {
+            logger.info("turn.event", {
+              sessionId: session.id,
+              type: event.type,
+              toolName: "toolName" in event ? event.toolName : undefined,
+              message: "message" in event ? event.message.content : undefined,
+              error: "error" in event ? event.error.message : undefined
+            });
             ui.renderEvent(event);
           }
         });
         session.messages = result.messages;
         session.model = model;
         store.save(session);
+        logger.info("turn.success", {
+          sessionId: session.id,
+          messageCount: session.messages.length
+        });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         session.messages.pop();
+        logger.error("turn.failure", {
+          sessionId: session.id,
+          model,
+          input,
+          error: message
+        });
         ui.warn(`Turn failed and was not saved: ${message}`);
       }
     }
@@ -105,7 +136,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /tools /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /tools /logs /quit");
       return true;
     case "/new":
       {
@@ -127,6 +158,9 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.ui.info(`Resumed session ${loaded.id}`);
       return true;
     }
+    case "/logs":
+      context.ui.info(`Log file: ${new AppLogger(loadAppConfig(context.cwd).logDir).getCurrentLogPath()}`);
+      return true;
     case "/model": {
       const nextModel = rest[0];
       if (!nextModel) {

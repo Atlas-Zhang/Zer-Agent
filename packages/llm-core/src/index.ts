@@ -11,6 +11,8 @@ export type ChatMessage = {
   content: string;
   name?: string;
   toolCallId?: string;
+  toolCalls?: ToolCallRequest[];
+  reasoningContent?: string;
 };
 
 export type ToolCallRequest = {
@@ -65,6 +67,15 @@ type DeepSeekMessage = {
   content: string;
   name?: string;
   tool_call_id?: string;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
+  reasoning_content?: string;
 };
 
 type DeepSeekTool = {
@@ -104,12 +115,14 @@ export class DeepSeekProvider implements LlmProvider {
         temperature: options.temperature,
         max_tokens: options.maxTokens,
         reasoning_effort: options.reasoningEffort,
+        thinking: { type: "disabled" },
         stream: false
       })
     });
 
     if (!response.ok) {
-      throw new Error(`DeepSeek request failed: ${response.status} ${response.statusText}`);
+      const errorBody = await response.text();
+      throw new Error(`DeepSeek request failed: ${response.status} ${response.statusText}${errorBody ? ` - ${errorBody}` : ""}`);
     }
 
     const payload = await response.json() as {
@@ -118,6 +131,7 @@ export class DeepSeekProvider implements LlmProvider {
         message?: {
           role?: ChatRole;
           content?: string;
+          reasoning_content?: string;
           tool_calls?: Array<{
             id?: string;
             function?: {
@@ -140,7 +154,13 @@ export class DeepSeekProvider implements LlmProvider {
     return {
       message: {
         role: message?.role ?? "assistant",
-        content: message?.content ?? ""
+        content: message?.content ?? "",
+        toolCalls: message?.tool_calls?.map((call, index) => ({
+          id: call.id ?? `tool_call_${index}`,
+          name: call.function?.name ?? "unknown",
+          arguments: safeJsonParse(call.function?.arguments)
+        })),
+        reasoningContent: message?.reasoning_content
       },
       toolCalls: message?.tool_calls?.map((call, index) => ({
         id: call.id ?? `tool_call_${index}`,
@@ -161,7 +181,16 @@ export class DeepSeekProvider implements LlmProvider {
       role: message.role,
       content: message.content,
       name: message.name,
-      tool_call_id: message.toolCallId
+      tool_call_id: message.toolCallId,
+      tool_calls: message.toolCalls?.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: {
+          name: call.name,
+          arguments: JSON.stringify(call.arguments)
+        }
+      })),
+      reasoning_content: message.reasoningContent
     }));
 
     if (systemPrompt) {

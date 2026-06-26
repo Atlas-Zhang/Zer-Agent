@@ -5,6 +5,7 @@ export const DEFAULT_COMMANDS = [
   "/model",
   "/session",
   "/tools",
+  "/logs",
   "/quit",
   "/exit"
 ] as const;
