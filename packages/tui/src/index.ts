@@ -25,7 +25,13 @@ export class TerminalUi {
         process.stdout.write(`tool> ${event.toolName} ${JSON.stringify(event.args)}\n`);
         break;
       case "tool-result":
-        process.stdout.write(`tool-result> ${event.toolName}\n${event.result.content}\n`);
+        process.stdout.write(`tool-result> ${event.toolName}${event.result.isError ? " [error]" : ""}\n${event.result.content}\n`);
+        if (event.result.citations?.length) {
+          process.stdout.write("citations>\n");
+          for (const citation of event.result.citations) {
+            process.stdout.write(`- ${citation.title}: ${citation.url}\n`);
+          }
+        }
         break;
       case "error":
         process.stderr.write(`error> ${event.error.message}\n`);

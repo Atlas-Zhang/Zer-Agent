@@ -25,7 +25,7 @@ async function main() {
 
   let session = store.create(config.model, cwd);
   let model = config.model;
-  const tools = createBuiltInTools({ cwd });
+  const tools = createBuiltInTools({ cwd, config });
 
   ui.renderBanner(session.id, model);
 

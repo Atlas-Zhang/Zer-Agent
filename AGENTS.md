@@ -33,3 +33,7 @@
 - Keep non-secret defaults documented in `.env`.
 - Put machine- or developer-specific overrides in `.env.local`.
 - Required secret for hosted inference: `DEEPSEEK_API_KEY`.
+- Optional search/news secrets:
+  - `TAVILY_API_KEY` enables `web_search`
+  - `GNEWS_API_KEY` enables `news_search`
+- `weather` uses Open-Meteo and does not require an API key for evaluation.

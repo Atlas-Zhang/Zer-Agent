@@ -8,6 +8,10 @@ export type AppConfig = {
   systemPrompt: string;
   deepSeekBaseUrl: string;
   shellContext: string;
+  searchProvider: "tavily";
+  newsProvider: "gnews";
+  tavilyApiKey?: string;
+  gnewsApiKey?: string;
 };
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -42,7 +46,11 @@ export function loadAppConfig(cwd: string): AppConfig {
     sessionDir: resolve(cwd, process.env.ZER_AGENT_SESSION_DIR ?? fileConfig.sessionDir ?? ".zer-agent/sessions"),
     systemPrompt: process.env.ZER_AGENT_SYSTEM_PROMPT ?? fileConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     deepSeekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? fileConfig.deepSeekBaseUrl ?? "https://api.deepseek.com",
-    shellContext: fileConfig.shellContext ?? DEFAULT_SHELL_CONTEXT
+    shellContext: fileConfig.shellContext ?? DEFAULT_SHELL_CONTEXT,
+    searchProvider: "tavily",
+    newsProvider: "gnews",
+    tavilyApiKey: readOptionalEnv("TAVILY_API_KEY"),
+    gnewsApiKey: readOptionalEnv("GNEWS_API_KEY")
   };
 }
 
@@ -64,4 +72,14 @@ function ensureEnvLoaded(cwd: string): void {
   loadDotEnv({ path: resolve(cwd, ".env") });
   loadDotEnv({ path: resolve(cwd, ".env.local"), override: true });
   envLoaded = true;
+}
+
+function readOptionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }

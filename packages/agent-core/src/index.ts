@@ -1,7 +1,17 @@
 import type { ChatMessage, ChatResponse, LlmProvider, ToolSchema } from "@zer-agent/llm-core";
 
+export type ToolCitation = {
+  title: string;
+  url: string;
+  source?: string;
+  snippet?: string;
+  publishedAt?: string;
+};
+
 export type ToolResult = {
   content: string;
+  details?: Record<string, unknown>;
+  citations?: ToolCitation[];
   isError?: boolean;
 };
 
@@ -67,7 +77,7 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
       }
 
       options.onEvent?.({ type: "tool-call", toolName: tool.name, args: call.arguments });
-      const result = await tool.execute(call.arguments);
+      const result = await executeToolCall(tool, call.arguments, options.onEvent);
       options.onEvent?.({ type: "tool-result", toolName: tool.name, result });
       messages.push({
         role: "tool",
@@ -79,4 +89,24 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
   }
 
   throw new Error(`Agent exceeded max iterations (${maxIterations}).`);
+}
+
+async function executeToolCall(
+  tool: AgentTool,
+  args: Record<string, unknown>,
+  onEvent?: (event: AgentEvent) => void
+): Promise<ToolResult> {
+  try {
+    return await tool.execute(args);
+  } catch (error: unknown) {
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    onEvent?.({ type: "error", error: normalizedError });
+    return {
+      content: `Tool ${tool.name} failed: ${normalizedError.message}`,
+      details: {
+        error: normalizedError.message
+      },
+      isError: true
+    };
+  }
 }

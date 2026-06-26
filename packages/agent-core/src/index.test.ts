@@ -48,3 +48,50 @@ test("runTurn executes requested tool calls and appends tool results", async () 
   assert.equal(result.messages.at(-1)?.content, "Done.");
   assert.equal(result.messages.at(-2)?.role, "tool");
 });
+
+test("runTurn converts tool failures into tool results instead of throwing", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate() {
+      calls += 1;
+      if (calls > 1) {
+        return {
+          message: { role: "assistant", content: "Recovered." }
+        };
+      }
+
+      return {
+        message: { role: "assistant", content: "" },
+        toolCalls: [
+          {
+            id: "call_1",
+            name: "read_file",
+            arguments: { path: "missing.txt" }
+          }
+        ]
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "read the file" }],
+    tools: [
+      {
+        name: "read_file",
+        description: "Read file",
+        input: {},
+        async execute() {
+          throw new Error("boom");
+        }
+      }
+    ],
+    maxIterations: 2
+  });
+
+  assert.equal(result.messages.at(-1)?.content, "Recovered.");
+  assert.match(result.messages.at(-2)?.content ?? "", /Tool read_file failed: boom/);
+});

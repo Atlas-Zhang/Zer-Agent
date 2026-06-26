@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { internalForTesting } from "./tools.js";
+import type { AppConfig } from "./config.js";
+import { createBuiltInTools, internalForTesting } from "./tools.js";
 
 test("normalizeWindowsCommand rewrites common cat/head pipeline", () => {
   const command = "cat package.json 2>/dev/null | head -40";
@@ -10,4 +11,42 @@ test("normalizeWindowsCommand rewrites common cat/head pipeline", () => {
     normalized,
     "Get-Content -Path 'package.json' -TotalCount 40 -ErrorAction SilentlyContinue"
   );
+});
+
+test("resolveSafePath blocks writes to protected paths", () => {
+  assert.throws(
+    () => internalForTesting.resolveSafePath("D:/repo", ".env"),
+    /Refusing to modify protected path/
+  );
+});
+
+test("createBuiltInTools only registers external search tools when configured", () => {
+  const baseConfig: AppConfig = {
+    model: "deepseek-v4-flash",
+    sessionDir: "sessions",
+    systemPrompt: "prompt",
+    deepSeekBaseUrl: "https://api.deepseek.com",
+    shellContext: "shell",
+    searchProvider: "tavily",
+    newsProvider: "gnews"
+  };
+
+  const withoutKeys = createBuiltInTools({
+    cwd: process.cwd(),
+    config: baseConfig
+  }).map((tool) => tool.name);
+  assert(!withoutKeys.includes("web_search"));
+  assert(!withoutKeys.includes("news_search"));
+  assert(withoutKeys.includes("weather"));
+
+  const withKeys = createBuiltInTools({
+    cwd: process.cwd(),
+    config: {
+      ...baseConfig,
+      tavilyApiKey: "tvly-key",
+      gnewsApiKey: "gnews-key"
+    }
+  }).map((tool) => tool.name);
+  assert(withKeys.includes("web_search"));
+  assert(withKeys.includes("news_search"));
 });
