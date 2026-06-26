@@ -36,6 +36,7 @@ export type RunTurnOptions = {
   tools: AgentTool[];
   maxIterations?: number;
   onEvent?: (event: AgentEvent) => void;
+  continueOnUnknownTool?: boolean;
 };
 
 export type TurnResult = {
@@ -73,6 +74,15 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
       if (!tool) {
         const error = new Error(`Unknown tool requested: ${call.name}`);
         options.onEvent?.({ type: "error", error });
+        if (options.continueOnUnknownTool) {
+          messages.push({
+            role: "tool",
+            name: call.name,
+            toolCallId: call.id,
+            content: `Tool ${call.name} is unavailable in this session.`
+          });
+          continue;
+        }
         throw error;
       }
 

@@ -95,3 +95,42 @@ test("runTurn converts tool failures into tool results instead of throwing", asy
   assert.equal(result.messages.at(-1)?.content, "Recovered.");
   assert.match(result.messages.at(-2)?.content ?? "", /Tool read_file failed: boom/);
 });
+
+test("runTurn can continue after unknown tool requests when configured", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate() {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: { role: "assistant", content: "" },
+          toolCalls: [
+            {
+              id: "call_1",
+              name: "missing_tool",
+              arguments: {}
+            }
+          ]
+        };
+      }
+
+      return {
+        message: { role: "assistant", content: "Fallback answer." }
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "do the thing" }],
+    tools: [],
+    maxIterations: 2,
+    continueOnUnknownTool: true
+  });
+
+  assert.equal(result.messages.at(-1)?.content, "Fallback answer.");
+  assert.match(result.messages.at(-2)?.content ?? "", /unavailable in this session/);
+});

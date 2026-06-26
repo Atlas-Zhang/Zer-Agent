@@ -59,20 +59,27 @@ async function main() {
       }
 
       session.messages.push({ role: "user", content: input });
-      const systemPrompt = [config.systemPrompt, config.shellContext, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
-      const result = await runTurn({
-        provider,
-        model,
-        systemPrompt,
-        messages: session.messages,
-        tools,
-        onEvent(event) {
-          ui.renderEvent(event);
-        }
-      });
-      session.messages = result.messages;
-      session.model = model;
-      store.save(session);
+      try {
+        const systemPrompt = [config.systemPrompt, config.shellContext, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
+        const result = await runTurn({
+          provider,
+          model,
+          systemPrompt,
+          messages: session.messages,
+          tools,
+          continueOnUnknownTool: true,
+          onEvent(event) {
+            ui.renderEvent(event);
+          }
+        });
+        session.messages = result.messages;
+        session.model = model;
+        store.save(session);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        session.messages.pop();
+        ui.warn(`Turn failed and was not saved: ${message}`);
+      }
     }
   } finally {
     ui.close();
