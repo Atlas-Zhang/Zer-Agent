@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/llm-core" },
+    { "path": "./packages/agent-core" },
+    { "path": "./packages/tui" },
+    { "path": "./packages/app" }
+  ]
+}

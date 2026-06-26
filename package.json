@@ -1,0 +1,24 @@
+{
+  "name": "zer-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "node scripts/clean.mjs",
+    "dev": "node packages/app/dist/cli.js",
+    "install:hooks": "git config core.hooksPath .githooks",
+    "start": "node packages/app/dist/cli.js",
+    "test": "node --test packages/*/dist/**/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "typescript": "^5.9.2"
+  }
+}

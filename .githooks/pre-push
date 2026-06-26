@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Refusing to push with uncommitted changes. Run the checkpoint workflow first." >&2
+  exit 1
+fi
