@@ -144,7 +144,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /tools /logs /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
@@ -190,6 +190,11 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
         config: loadAppConfig(context.cwd)
       })));
       return true;
+    case "/verbose": {
+      const enabled = context.ui.toggleVerbose();
+      context.ui.info(`Verbose mode ${enabled ? "enabled" : "disabled"}.`);
+      return true;
+    }
     default:
       context.ui.info(`Unknown command: ${command}`);
       return true;
