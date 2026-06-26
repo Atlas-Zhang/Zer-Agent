@@ -35,7 +35,8 @@ async function main() {
     cwd,
     model,
     sessionId: session.id,
-    toolNames: tools.map((tool) => tool.name)
+    toolNames: tools.map((tool) => tool.name),
+    maxIterations: config.maxIterations
   });
 
   ui.renderBanner(session.id, model);
@@ -84,6 +85,7 @@ async function main() {
           systemPrompt,
           messages: session.messages,
           tools,
+          maxIterations: config.maxIterations,
           continueOnUnknownTool: true,
           onEvent(event) {
             logger.info("turn.event", {

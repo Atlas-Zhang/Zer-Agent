@@ -40,3 +40,4 @@
   - `GNEWS_API_KEY` enables `news_search`
 - `weather` uses Open-Meteo and does not require an API key for evaluation.
 - Runtime logs are persisted under `.zer-agent/logs` unless overridden by `ZER_AGENT_LOG_DIR`.
+- Iteration budget can be tuned with `ZER_AGENT_MAX_ITERATIONS`; default is 8.

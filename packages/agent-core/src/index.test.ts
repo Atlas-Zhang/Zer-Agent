@@ -134,3 +134,51 @@ test("runTurn can continue after unknown tool requests when configured", async (
   assert.equal(result.messages.at(-1)?.content, "Fallback answer.");
   assert.match(result.messages.at(-2)?.content ?? "", /unavailable in this session/);
 });
+
+test("runTurn makes a final no-tool attempt after iteration exhaustion", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate(options) {
+      calls += 1;
+      if (calls <= 2) {
+        return {
+          message: { role: "assistant", content: "" },
+          toolCalls: [
+            {
+              id: `call_${calls}`,
+              name: "read_file",
+              arguments: { path: `file-${calls}.txt` }
+            }
+          ]
+        };
+      }
+
+      assert.equal(options.tools, undefined);
+      assert.match(options.systemPrompt ?? "", /Do not call any more tools/);
+      return {
+        message: { role: "assistant", content: "Best effort final answer." }
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "do the thing" }],
+    tools: [
+      {
+        name: "read_file",
+        description: "Read file",
+        input: {},
+        async execute(args) {
+          return { content: `read ${String(args.path)}` };
+        }
+      }
+    ],
+    maxIterations: 2
+  });
+
+  assert.equal(result.messages.at(-1)?.content, "Best effort final answer.");
+});

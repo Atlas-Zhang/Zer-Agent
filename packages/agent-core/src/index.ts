@@ -37,6 +37,7 @@ export type RunTurnOptions = {
   maxIterations?: number;
   onEvent?: (event: AgentEvent) => void;
   continueOnUnknownTool?: boolean;
+  finalAttemptOnExhaustion?: boolean;
 };
 
 export type TurnResult = {
@@ -96,6 +97,23 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
         content: result.content
       });
     }
+  }
+
+  if (options.finalAttemptOnExhaustion ?? true) {
+    const recoveryResponse = await options.provider.generate({
+      model: options.model,
+      messages,
+      systemPrompt: [
+        options.systemPrompt,
+        `You have already used up the tool loop budget (${maxIterations} iterations).`,
+        "Do not call any more tools.",
+        "Provide the best final answer you can from the information already gathered."
+      ].join("\n\n")
+    });
+
+    messages.push(recoveryResponse.message);
+    options.onEvent?.({ type: "assistant", message: recoveryResponse.message, usage: recoveryResponse.usage });
+    return { messages };
   }
 
   throw new Error(`Agent exceeded max iterations (${maxIterations}).`);
