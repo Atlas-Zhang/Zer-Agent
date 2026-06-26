@@ -19,6 +19,7 @@ async function main() {
   const store = new SessionStore(config.sessionDir);
   const provider = new DeepSeekProvider({
     apiKey: readDeepSeekApiKey(),
+    baseUrl: config.deepSeekBaseUrl,
     defaultModel: config.model
   });
 

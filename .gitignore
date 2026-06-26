@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .zer-agent/
+.env.local
 *.log
 coverage/
 *.tsbuildinfo

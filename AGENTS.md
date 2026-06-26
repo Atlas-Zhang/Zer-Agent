@@ -28,3 +28,8 @@
 ## Validation
 - Run `npm run build` after structural TypeScript changes.
 - Run `npm test` for behavior changes once the build succeeds.
+
+## Runtime Configuration
+- Keep non-secret defaults documented in `.env`.
+- Put machine- or developer-specific overrides in `.env.local`.
+- Required secret for hosted inference: `DEEPSEEK_API_KEY`.
