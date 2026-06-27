@@ -20,6 +20,33 @@ test("session store creates, saves, loads, and lists sessions", () => {
     const listed = store.list();
     assert.equal(listed.length, 1);
     assert.equal(listed[0]?.id, session.id);
+    assert.equal(listed[0]?.metrics.turnCount, 0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("session store finds latest session for cwd and returns user history", () => {
+  const root = mkdtempSync(join(tmpdir(), "zer-agent-session-"));
+  const store = new SessionStore(root);
+
+  try {
+    const first = store.create("deepseek-v4-flash", "D:/repo-a");
+    first.messages.push({ role: "user", content: "first prompt" });
+    store.save(first);
+
+    const second = store.create("deepseek-v4-flash", "D:/repo-b");
+    second.messages.push({ role: "user", content: "weather wuxi" });
+    second.messages.push({ role: "assistant", content: "answer" });
+    second.messages.push({ role: "user", content: "world cup export" });
+    store.recordTurn(second, { inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+
+    const latest = store.findLatestForCwd("D:/repo-b");
+    assert.equal(latest?.id, second.id);
+    assert.equal(latest?.metrics.totalTokens, 15);
+
+    const history = store.getUserHistory(second);
+    assert.deepEqual(history, ["world cup export", "weather wuxi"]);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

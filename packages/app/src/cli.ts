@@ -27,19 +27,22 @@ async function main() {
     defaultModel: config.model
   });
 
-  let session = store.create(config.model, cwd);
-  let model = config.model;
+  let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd);
+  let model = session.model;
   const tools = createBuiltInTools({ cwd, config });
   const toolInventoryPrompt = describeAvailableTools(tools);
+  const startupMode = session.messages.length > 0 ? "resumed" : "new";
   logger.info("app.start", {
     cwd,
     model,
     sessionId: session.id,
     toolNames: tools.map((tool) => tool.name),
-    maxIterations: config.maxIterations
+    maxIterations: config.maxIterations,
+    startupMode
   });
 
-  ui.renderBanner(session.id, model);
+  ui.setHistory(store.getUserHistory(session));
+  ui.renderBanner(session.id, model, startupMode);
 
   try {
     for (;;) {
@@ -100,7 +103,8 @@ async function main() {
         });
         session.messages = result.messages;
         session.model = model;
-        store.save(session);
+        store.recordTurn(session, result.usage);
+        ui.setHistory(store.getUserHistory(session));
         ui.endTurn();
         const finalAssistantMessage = getFinalAssistantMessage(result.messages);
         if (finalAssistantMessage) {
@@ -152,6 +156,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       {
         const nextSession = context.store.create(context.model, context.cwd);
         context.setSession(nextSession);
+        context.ui.setHistory(context.store.getUserHistory(nextSession));
         context.ui.info(`Started session ${nextSession.id}`);
       }
       return true;
@@ -165,6 +170,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       const loaded = context.store.load(sessionId);
       context.setSession(loaded);
       context.setModel(loaded.model);
+      context.ui.setHistory(context.store.getUserHistory(loaded));
       context.ui.info(`Resumed session ${loaded.id}`);
       return true;
     }
@@ -184,7 +190,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       return true;
     }
     case "/session":
-      context.ui.info(`Session ${context.session.id} | model=${context.model} | cwd=${context.cwd}`);
+      context.ui.info(formatSessionSummary(context.session, context.model, context.cwd));
       return true;
     case "/tools":
       context.ui.info(describeAvailableTools(createBuiltInTools({
@@ -202,6 +208,23 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       return true;
   }
 }
+
+function formatSessionSummary(session: StoredSession, model: string, cwd: string): string {
+  const tokenSummary = session.metrics.totalTokens > 0
+    ? `${session.metrics.totalTokens} (in=${session.metrics.inputTokens}, out=${session.metrics.outputTokens})`
+    : (session.messages.length > 0 ? "untracked for this older session" : "0 (in=0, out=0)");
+
+  return [
+    `Session ${session.id}`,
+    `model=${model}`,
+    `cwd=${cwd}`,
+    `turns=${session.metrics.turnCount}`,
+    `messages=${session.messages.length}`,
+    `tokens=${tokenSummary}`,
+    `updated=${session.updatedAt}`
+  ].join(" | ");
+}
+
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.stack ?? error.message : String(error);

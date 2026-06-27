@@ -22,8 +22,14 @@ export class TerminalUi {
     return this.rl.question(colorize("blue", label));
   }
 
-  renderBanner(sessionId: string, model: string): void {
-    process.stdout.write(`${bold(colorize("cyan", "Zer-Agent"))} ${dim(`| session=${sessionId} | model=${model}`)}\n`);
+  setHistory(entries: string[]): void {
+    const history = [...entries].reverse();
+    const target = this.rl as readline.Interface & { history?: string[] };
+    target.history = history;
+  }
+
+  renderBanner(sessionId: string, model: string, status?: string): void {
+    process.stdout.write(`${bold(colorize("cyan", "Zer-Agent"))} ${dim(`| session=${sessionId} | model=${model}${status ? ` | ${status}` : ""}`)}\n`);
     process.stdout.write(`${dim("Commands:")} ${colorize("green", "/help")} ${colorize("green", "/new")} ${colorize("green", "/resume <id>")} ${colorize("green", "/model <name>")} ${colorize("green", "/session")} ${colorize("green", "/tools")} ${colorize("green", "/logs")} ${colorize("green", "/verbose")}\n\n`);
   }
 

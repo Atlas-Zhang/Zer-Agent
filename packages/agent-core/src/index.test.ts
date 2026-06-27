@@ -47,6 +47,7 @@ test("runTurn executes requested tool calls and appends tool results", async () 
 
   assert.equal(result.messages.at(-1)?.content, "Done.");
   assert.equal(result.messages.at(-2)?.role, "tool");
+  assert.equal(result.usage.totalTokens, 0);
 });
 
 test("runTurn converts tool failures into tool results instead of throwing", async () => {

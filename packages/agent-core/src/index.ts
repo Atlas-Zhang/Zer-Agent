@@ -42,6 +42,11 @@ export type RunTurnOptions = {
 
 export type TurnResult = {
   messages: ChatMessage[];
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
 };
 
 export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
@@ -53,6 +58,11 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
     input: tool.input
   }));
   const maxIterations = options.maxIterations ?? 6;
+  const usage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0
+  };
 
   for (let index = 0; index < maxIterations; index += 1) {
     const response = await options.provider.generate({
@@ -65,9 +75,12 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
     const assistantMessage = response.message;
     messages.push(assistantMessage);
     options.onEvent?.({ type: "assistant", message: assistantMessage, usage: response.usage });
+    usage.inputTokens += response.usage?.inputTokens ?? 0;
+    usage.outputTokens += response.usage?.outputTokens ?? 0;
+    usage.totalTokens += response.usage?.totalTokens ?? 0;
 
     if (!response.toolCalls?.length) {
-      return { messages };
+      return { messages, usage };
     }
 
     for (const call of response.toolCalls) {
@@ -113,7 +126,10 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
 
     messages.push(recoveryResponse.message);
     options.onEvent?.({ type: "assistant", message: recoveryResponse.message, usage: recoveryResponse.usage });
-    return { messages };
+    usage.inputTokens += recoveryResponse.usage?.inputTokens ?? 0;
+    usage.outputTokens += recoveryResponse.usage?.outputTokens ?? 0;
+    usage.totalTokens += recoveryResponse.usage?.totalTokens ?? 0;
+    return { messages, usage };
   }
 
   throw new Error(`Agent exceeded max iterations (${maxIterations}).`);
