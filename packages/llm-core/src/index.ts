@@ -150,23 +150,25 @@ export class DeepSeekProvider implements LlmProvider {
 
     const choice = payload.choices?.[0];
     const message = choice?.message;
+    const parsedToolCalls = message?.tool_calls?.map((call, index) => ({
+      id: call.id ?? `tool_call_${index}`,
+      name: call.function?.name ?? "unknown",
+      arguments: safeJsonParse(call.function?.arguments)
+    })) ?? [];
+    const inferredToolCalls = parsedToolCalls.length > 0 ? [] : parseDsmlToolCalls(message?.content);
+    const normalizedToolCalls = parsedToolCalls.length > 0 ? parsedToolCalls : inferredToolCalls;
+    const normalizedContent = inferredToolCalls.length > 0
+      ? stripDsmlToolCalls(message?.content ?? "")
+      : (message?.content ?? "");
 
     return {
       message: {
         role: message?.role ?? "assistant",
-        content: message?.content ?? "",
-        toolCalls: message?.tool_calls?.map((call, index) => ({
-          id: call.id ?? `tool_call_${index}`,
-          name: call.function?.name ?? "unknown",
-          arguments: safeJsonParse(call.function?.arguments)
-        })),
+        content: normalizedContent,
+        toolCalls: normalizedToolCalls,
         reasoningContent: message?.reasoning_content
       },
-      toolCalls: message?.tool_calls?.map((call, index) => ({
-        id: call.id ?? `tool_call_${index}`,
-        name: call.function?.name ?? "unknown",
-        arguments: safeJsonParse(call.function?.arguments)
-      })),
+      toolCalls: normalizedToolCalls,
       usage: {
         inputTokens: payload.usage?.prompt_tokens,
         outputTokens: payload.usage?.completion_tokens,
@@ -227,4 +229,65 @@ function safeJsonParse(value: string | undefined): Record<string, unknown> {
   }
 
   return {};
+}
+
+function parseDsmlToolCalls(content: string | undefined): ToolCallRequest[] {
+  if (!content || !/tool_calls/i.test(content) || !/invoke name=/i.test(content)) {
+    return [];
+  }
+
+  const invokePattern = /<[^>]*invoke name="([^"]+)"[^>]*>([\s\S]*?)<\/[^>]*invoke>/gi;
+  const calls: ToolCallRequest[] = [];
+  let match: RegExpExecArray | null;
+  let callIndex = 0;
+
+  while ((match = invokePattern.exec(content)) !== null) {
+    callIndex += 1;
+    const name = match[1] ?? "unknown";
+    const body = match[2] ?? "";
+    const argumentsObject: Record<string, unknown> = {};
+    const parameterPattern = /<[^>]*parameter name="([^"]+)" string="(true|false)"[^>]*>([\s\S]*?)<\/[^>]*parameter>/gi;
+    let parameterMatch: RegExpExecArray | null;
+
+    while ((parameterMatch = parameterPattern.exec(body)) !== null) {
+      const parameterName = parameterMatch[1] ?? "value";
+      const isString = parameterMatch[2] === "true";
+      const rawValue = decodeXmlEntities((parameterMatch[3] ?? "").trim());
+      argumentsObject[parameterName] = isString ? rawValue : coerceScalar(rawValue);
+    }
+
+    calls.push({
+      id: `dsml_tool_call_${callIndex}`,
+      name,
+      arguments: argumentsObject
+    });
+  }
+
+  return calls;
+}
+
+function stripDsmlToolCalls(content: string): string {
+  return content.replace(/<[^>]*tool_calls[^>]*>[\s\S]*?<\/[^>]*tool_calls>/gi, "").trim();
+}
+
+function coerceScalar(value: string): unknown {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) {
+    return Number(value);
+  }
+  return value;
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
