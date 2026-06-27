@@ -98,6 +98,48 @@ test("DeepSeek provider preserves assistant tool call structure in follow-up req
   assert.equal(request.messages?.[0]?.tool_calls?.[0]?.function?.name, "weather");
 });
 
+test("DeepSeek provider omits empty assistant tool call arrays", async () => {
+  const capturedBodies: string[] = [];
+  const provider = new DeepSeekProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_input, init) => {
+      capturedBodies.push(String(init?.body ?? ""));
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: "done"
+            }
+          }
+        ]
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  const response = await provider.generate({
+    model: "deepseek-v4-flash",
+    messages: [
+      {
+        role: "assistant",
+        content: "previous reply",
+        toolCalls: []
+      }
+    ]
+  });
+
+  const request = JSON.parse(capturedBodies[0] ?? "{}") as {
+    messages?: Array<{ tool_calls?: unknown }>;
+  };
+  assert.equal(request.messages?.[0]?.tool_calls, undefined);
+  assert.equal(response.toolCalls, undefined);
+  assert.equal(response.message.toolCalls, undefined);
+});
+
 test("DeepSeek provider infers DSML tool calls from assistant content", async () => {
   const provider = new DeepSeekProvider({
     apiKey: "test-key",

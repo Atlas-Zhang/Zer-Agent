@@ -157,6 +157,7 @@ export class DeepSeekProvider implements LlmProvider {
     })) ?? [];
     const inferredToolCalls = parsedToolCalls.length > 0 ? [] : parseDsmlToolCalls(message?.content);
     const normalizedToolCalls = parsedToolCalls.length > 0 ? parsedToolCalls : inferredToolCalls;
+    const responseToolCalls = normalizedToolCalls.length > 0 ? normalizedToolCalls : undefined;
     const normalizedContent = inferredToolCalls.length > 0
       ? stripDsmlToolCalls(message?.content ?? "")
       : (message?.content ?? "");
@@ -165,10 +166,10 @@ export class DeepSeekProvider implements LlmProvider {
       message: {
         role: message?.role ?? "assistant",
         content: normalizedContent,
-        toolCalls: normalizedToolCalls,
+        toolCalls: responseToolCalls,
         reasoningContent: message?.reasoning_content
       },
-      toolCalls: normalizedToolCalls,
+      toolCalls: responseToolCalls,
       usage: {
         inputTokens: payload.usage?.prompt_tokens,
         outputTokens: payload.usage?.completion_tokens,
@@ -179,21 +180,28 @@ export class DeepSeekProvider implements LlmProvider {
   }
 
   private toWireMessages(messages: ChatMessage[], systemPrompt?: string): DeepSeekMessage[] {
-    const wireMessages = messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-      name: message.name,
-      tool_call_id: message.toolCallId,
-      tool_calls: message.toolCalls?.map((call) => ({
-        id: call.id,
-        type: "function" as const,
-        function: {
-          name: call.name,
-          arguments: JSON.stringify(call.arguments)
-        }
-      })),
-      reasoning_content: message.reasoningContent
-    }));
+    const wireMessages = messages.map((message) => {
+      const wireMessage: DeepSeekMessage = {
+        role: message.role,
+        content: message.content,
+        name: message.name,
+        tool_call_id: message.toolCallId,
+        reasoning_content: message.reasoningContent
+      };
+
+      if (message.toolCalls?.length) {
+        wireMessage.tool_calls = message.toolCalls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          function: {
+            name: call.name,
+            arguments: JSON.stringify(call.arguments)
+          }
+        }));
+      }
+
+      return wireMessage;
+    });
 
     if (systemPrompt) {
       return [{ role: "system", content: systemPrompt }, ...wireMessages];

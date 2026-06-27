@@ -36,3 +36,15 @@ test("repairConversationHistory removes dangling assistant tool-call tails", () 
   assert.equal(repaired.length, 3);
   assert.equal(repaired.at(-1)?.role, "tool");
 });
+
+test("repairConversationHistory strips empty assistant tool call arrays", () => {
+  const repaired = repairConversationHistory([
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "No tools needed.", toolCalls: [] }
+  ]);
+
+  assert.deepEqual(repaired, [
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "No tools needed." }
+  ]);
+});

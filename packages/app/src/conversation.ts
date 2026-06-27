@@ -16,7 +16,8 @@ export function repairConversationHistory(messages: ChatMessage[]): ChatMessage[
   let pendingStartIndex: number | null = null;
   let pendingToolCalls = new Set<string>();
 
-  for (const message of messages) {
+  for (const rawMessage of messages) {
+    const message = normalizeMessage(rawMessage);
     if (message.role === "assistant" && message.toolCalls?.length) {
       rollbackPendingIfNeeded(repaired, pendingStartIndex, pendingToolCalls);
       pendingStartIndex = repaired.length;
@@ -50,6 +51,16 @@ export function repairConversationHistory(messages: ChatMessage[]): ChatMessage[
   }
 
   return repaired;
+}
+
+function normalizeMessage(message: ChatMessage): ChatMessage {
+  if (message.toolCalls?.length === 0) {
+    const normalizedMessage = { ...message };
+    delete normalizedMessage.toolCalls;
+    return normalizedMessage;
+  }
+
+  return message;
 }
 
 function rollbackPendingIfNeeded(

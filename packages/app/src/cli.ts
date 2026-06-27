@@ -233,8 +233,9 @@ function repairAndPersistSessionIfNeeded(
   store: SessionStore,
   logger?: AppLogger
 ): StoredSession {
+  const originalMessagesJson = JSON.stringify(session.messages);
   const repairedMessages = repairConversationHistory(session.messages);
-  if (repairedMessages.length !== session.messages.length) {
+  if (JSON.stringify(repairedMessages) !== originalMessagesJson) {
     const removedMessages = session.messages.length - repairedMessages.length;
     session.messages = repairedMessages;
     store.save(session);
