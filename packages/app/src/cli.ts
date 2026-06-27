@@ -6,7 +6,7 @@ import { runTurn } from "@zer-agent/agent-core";
 import { DeepSeekProvider } from "@zer-agent/llm-core";
 import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, readDeepSeekApiKey } from "./config.js";
-import { getFinalAssistantMessage } from "./conversation.js";
+import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
@@ -28,6 +28,7 @@ async function main() {
   });
 
   let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd);
+  session = repairAndPersistSessionIfNeeded(session, store, logger);
   let model = session.model;
   const tools = createBuiltInTools({ cwd, config });
   const toolInventoryPrompt = describeAvailableTools(tools);
@@ -74,6 +75,7 @@ async function main() {
       }
 
       session.messages.push({ role: "user", content: input });
+      session.messages = repairConversationHistory(session.messages);
       logger.info("turn.start", {
         sessionId: session.id,
         model,
@@ -101,7 +103,7 @@ async function main() {
             ui.renderTurnProgress(event);
           }
         });
-        session.messages = result.messages;
+        session.messages = repairConversationHistory(result.messages);
         session.model = model;
         store.recordTurn(session, result.usage);
         ui.setHistory(store.getUserHistory(session));
@@ -168,10 +170,11 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
         return true;
       }
       const loaded = context.store.load(sessionId);
-      context.setSession(loaded);
-      context.setModel(loaded.model);
-      context.ui.setHistory(context.store.getUserHistory(loaded));
-      context.ui.info(`Resumed session ${loaded.id}`);
+      const repaired = repairAndPersistSessionIfNeeded(loaded, context.store);
+      context.setSession(repaired);
+      context.setModel(repaired.model);
+      context.ui.setHistory(context.store.getUserHistory(repaired));
+      context.ui.info(`Resumed session ${repaired.id}`);
       return true;
     }
     case "/logs":
@@ -223,6 +226,25 @@ function formatSessionSummary(session: StoredSession, model: string, cwd: string
     `tokens=${tokenSummary}`,
     `updated=${session.updatedAt}`
   ].join(" | ");
+}
+
+function repairAndPersistSessionIfNeeded(
+  session: StoredSession,
+  store: SessionStore,
+  logger?: AppLogger
+): StoredSession {
+  const repairedMessages = repairConversationHistory(session.messages);
+  if (repairedMessages.length !== session.messages.length) {
+    const removedMessages = session.messages.length - repairedMessages.length;
+    session.messages = repairedMessages;
+    store.save(session);
+    logger?.warn("session.repaired", {
+      sessionId: session.id,
+      removedMessages
+    });
+  }
+
+  return session;
 }
 
 

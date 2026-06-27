@@ -183,3 +183,67 @@ test("runTurn makes a final no-tool attempt after iteration exhaustion", async (
 
   assert.equal(result.messages.at(-1)?.content, "Best effort final answer.");
 });
+
+test("runTurn strips tool calls from the final recovery attempt", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate() {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: { role: "assistant", content: "" },
+          toolCalls: [
+            {
+              id: "call_1",
+              name: "read_file",
+              arguments: { path: "a.txt" }
+            }
+          ]
+        };
+      }
+
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "call_2",
+              name: "read_file",
+              arguments: { path: "b.txt" }
+            }
+          ]
+        },
+        toolCalls: [
+          {
+            id: "call_2",
+            name: "read_file",
+            arguments: { path: "b.txt" }
+          }
+        ]
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "do the thing" }],
+    tools: [
+      {
+        name: "read_file",
+        description: "Read file",
+        input: {},
+        async execute() {
+          return { content: "read a" };
+        }
+      }
+    ],
+    maxIterations: 1
+  });
+
+  assert.equal(result.messages.at(-1)?.toolCalls, undefined);
+  assert.match(result.messages.at(-1)?.content ?? "", /best answer available so far/i);
+});

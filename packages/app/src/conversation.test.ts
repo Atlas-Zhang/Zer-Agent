@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getFinalAssistantMessage } from "./conversation.js";
+import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
 
 test("getFinalAssistantMessage returns the last non-empty assistant message", () => {
   const message = getFinalAssistantMessage([
@@ -11,4 +11,28 @@ test("getFinalAssistantMessage returns the last non-empty assistant message", ()
   ]);
 
   assert.equal(message?.content, "Final answer");
+});
+
+test("repairConversationHistory removes dangling assistant tool-call tails", () => {
+  const repaired = repairConversationHistory([
+    { role: "user", content: "find scores" },
+    {
+      role: "assistant",
+      content: "Searching...",
+      toolCalls: [
+        { id: "call_1", name: "web_search", arguments: { query: "scores" } }
+      ]
+    },
+    { role: "tool", content: "result", toolCallId: "call_1", name: "web_search" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [
+        { id: "call_2", name: "web_search", arguments: { query: "more scores" } }
+      ]
+    }
+  ]);
+
+  assert.equal(repaired.length, 3);
+  assert.equal(repaired.at(-1)?.role, "tool");
 });

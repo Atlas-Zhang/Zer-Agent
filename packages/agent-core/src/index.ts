@@ -124,8 +124,16 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
       ].join("\n\n")
     });
 
-    messages.push(recoveryResponse.message);
-    options.onEvent?.({ type: "assistant", message: recoveryResponse.message, usage: recoveryResponse.usage });
+    const recoveryMessage = recoveryResponse.toolCalls?.length
+      ? {
+          ...recoveryResponse.message,
+          toolCalls: undefined,
+          content: recoveryResponse.message.content.trim() || "I couldn't complete more tool steps within the iteration limit, so I am returning the best answer available so far."
+        }
+      : recoveryResponse.message;
+
+    messages.push(recoveryMessage);
+    options.onEvent?.({ type: "assistant", message: recoveryMessage, usage: recoveryResponse.usage });
     usage.inputTokens += recoveryResponse.usage?.inputTokens ?? 0;
     usage.outputTokens += recoveryResponse.usage?.outputTokens ?? 0;
     usage.totalTokens += recoveryResponse.usage?.totalTokens ?? 0;
