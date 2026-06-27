@@ -139,11 +139,18 @@ async function requestFinalAnswer(
 ): Promise<TurnResult> {
   const recoveryResponse = await options.provider.generate({
     model: options.model,
-    messages,
+    messages: [
+      ...messages,
+      {
+        role: "user",
+        content: "Stop using tools now. Write the final answer in normal Markdown using only the tool results already shown above."
+      }
+    ],
     systemPrompt: [
       options.systemPrompt,
       reason,
       "Do not call any more tools.",
+      "Do not emit function calls, tool_calls, DSML/XML tool markup, or JSON tool requests.",
       "Provide the best final answer you can from the information already gathered."
     ].join("\n\n")
   });
@@ -152,7 +159,7 @@ async function requestFinalAnswer(
     ? {
         ...recoveryResponse.message,
         toolCalls: undefined,
-        content: recoveryResponse.message.content.trim() || "I couldn't complete more tool steps, so I am returning the best answer available so far."
+        content: recoveryResponse.message.content.trim() || buildFallbackFinalAnswer(messages)
       }
     : recoveryResponse.message;
 
@@ -162,6 +169,38 @@ async function requestFinalAnswer(
   usage.outputTokens += recoveryResponse.usage?.outputTokens ?? 0;
   usage.totalTokens += recoveryResponse.usage?.totalTokens ?? 0;
   return { messages, usage };
+}
+
+function buildFallbackFinalAnswer(messages: ChatMessage[]): string {
+  const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
+  const currentTurnMessages = lastUserIndex >= 0 ? messages.slice(lastUserIndex + 1) : messages;
+  const toolMessages = currentTurnMessages
+    .filter((message) => message.role === "tool" && message.content.trim())
+    .slice(-5);
+
+  if (toolMessages.length === 0) {
+    return "I couldn't complete more tool steps, and no usable tool results were available for a final answer.";
+  }
+
+  const sections = toolMessages.map((message, index) => {
+    const title = message.name ? `Result ${index + 1}: ${message.name}` : `Result ${index + 1}`;
+    return `### ${title}\n\n${truncateToolContent(message.content.trim())}`;
+  });
+
+  return [
+    "I couldn't complete additional tool steps, so here is the best answer from the information already gathered.",
+    "",
+    ...sections
+  ].join("\n");
+}
+
+function truncateToolContent(content: string): string {
+  const maxLength = 3500;
+  if (content.length <= maxLength) {
+    return content;
+  }
+
+  return `${content.slice(0, maxLength).trimEnd()}\n\n[truncated]`;
 }
 
 async function executeToolCall(

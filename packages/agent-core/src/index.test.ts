@@ -245,7 +245,66 @@ test("runTurn strips tool calls from the final recovery attempt", async () => {
   });
 
   assert.equal(result.messages.at(-1)?.toolCalls, undefined);
-  assert.match(result.messages.at(-1)?.content ?? "", /best answer available so far/i);
+  assert.match(result.messages.at(-1)?.content ?? "", /best answer from the information/i);
+  assert.match(result.messages.at(-1)?.content ?? "", /read a/i);
+});
+
+test("runTurn asks recovery responses to answer without tools", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate(options) {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: { role: "assistant", content: "" },
+          toolCalls: [
+            {
+              id: "call_1",
+              name: "web_search",
+              arguments: { query: "latest news" }
+            }
+          ]
+        };
+      }
+
+      assert.match(options.systemPrompt ?? "", /Do not emit function calls/);
+      assert.equal(options.messages.at(-1)?.role, "user");
+      assert.match(options.messages.at(-1)?.content ?? "", /Write the final answer/);
+      return {
+        message: { role: "assistant", content: "" },
+        toolCalls: [
+          {
+            id: "call_2",
+            name: "web_search",
+            arguments: { query: "more news" }
+          }
+        ]
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "latest news" }],
+    tools: [
+      {
+        name: "web_search",
+        description: "Search web",
+        input: {},
+        async execute() {
+          return { content: "Headline: Major policy update. Key point: markets reacted." };
+        }
+      }
+    ],
+    maxIterations: 1
+  });
+
+  assert.equal(result.messages.at(-1)?.toolCalls, undefined);
+  assert.match(result.messages.at(-1)?.content ?? "", /Major policy update/);
+  assert.match(result.messages.at(-1)?.content ?? "", /Key point/);
 });
 
 test("runTurn forces a final answer when the provider returns an empty no-tool assistant message", async () => {
