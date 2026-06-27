@@ -247,3 +247,35 @@ test("runTurn strips tool calls from the final recovery attempt", async () => {
   assert.equal(result.messages.at(-1)?.toolCalls, undefined);
   assert.match(result.messages.at(-1)?.content ?? "", /best answer available so far/i);
 });
+
+test("runTurn forces a final answer when the provider returns an empty no-tool assistant message", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate(options) {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: { role: "assistant", content: "" }
+        };
+      }
+
+      assert.equal(options.tools, undefined);
+      assert.match(options.systemPrompt ?? "", /previous assistant response was empty/i);
+      return {
+        message: { role: "assistant", content: "Completed final answer." }
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "finish task" }],
+    tools: []
+  });
+
+  assert.equal(result.messages.length, 2);
+  assert.equal(result.messages.at(-1)?.content, "Completed final answer.");
+});

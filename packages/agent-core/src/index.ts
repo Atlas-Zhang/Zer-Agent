@@ -80,7 +80,13 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
     usage.totalTokens += response.usage?.totalTokens ?? 0;
 
     if (!response.toolCalls?.length) {
-      return { messages, usage };
+      if (assistantMessage.content.trim()) {
+        return { messages, usage };
+      }
+
+      messages.pop();
+      const finalized = await requestFinalAnswer(options, messages, usage, "The previous assistant response was empty.");
+      return { messages: finalized.messages, usage: finalized.usage };
     }
 
     for (const call of response.toolCalls) {
@@ -113,34 +119,49 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
   }
 
   if (options.finalAttemptOnExhaustion ?? true) {
-    const recoveryResponse = await options.provider.generate({
-      model: options.model,
+    const finalized = await requestFinalAnswer(
+      options,
       messages,
-      systemPrompt: [
-        options.systemPrompt,
-        `You have already used up the tool loop budget (${maxIterations} iterations).`,
-        "Do not call any more tools.",
-        "Provide the best final answer you can from the information already gathered."
-      ].join("\n\n")
-    });
-
-    const recoveryMessage = recoveryResponse.toolCalls?.length
-      ? {
-          ...recoveryResponse.message,
-          toolCalls: undefined,
-          content: recoveryResponse.message.content.trim() || "I couldn't complete more tool steps within the iteration limit, so I am returning the best answer available so far."
-        }
-      : recoveryResponse.message;
-
-    messages.push(recoveryMessage);
-    options.onEvent?.({ type: "assistant", message: recoveryMessage, usage: recoveryResponse.usage });
-    usage.inputTokens += recoveryResponse.usage?.inputTokens ?? 0;
-    usage.outputTokens += recoveryResponse.usage?.outputTokens ?? 0;
-    usage.totalTokens += recoveryResponse.usage?.totalTokens ?? 0;
-    return { messages, usage };
+      usage,
+      `You have already used up the tool loop budget (${maxIterations} iterations).`
+    );
+    return { messages: finalized.messages, usage: finalized.usage };
   }
 
   throw new Error(`Agent exceeded max iterations (${maxIterations}).`);
+}
+
+async function requestFinalAnswer(
+  options: RunTurnOptions,
+  messages: ChatMessage[],
+  usage: TurnResult["usage"],
+  reason: string
+): Promise<TurnResult> {
+  const recoveryResponse = await options.provider.generate({
+    model: options.model,
+    messages,
+    systemPrompt: [
+      options.systemPrompt,
+      reason,
+      "Do not call any more tools.",
+      "Provide the best final answer you can from the information already gathered."
+    ].join("\n\n")
+  });
+
+  const recoveryMessage = recoveryResponse.toolCalls?.length || !recoveryResponse.message.content.trim()
+    ? {
+        ...recoveryResponse.message,
+        toolCalls: undefined,
+        content: recoveryResponse.message.content.trim() || "I couldn't complete more tool steps, so I am returning the best answer available so far."
+      }
+    : recoveryResponse.message;
+
+  messages.push(recoveryMessage);
+  options.onEvent?.({ type: "assistant", message: recoveryMessage, usage: recoveryResponse.usage });
+  usage.inputTokens += recoveryResponse.usage?.inputTokens ?? 0;
+  usage.outputTokens += recoveryResponse.usage?.outputTokens ?? 0;
+  usage.totalTokens += recoveryResponse.usage?.totalTokens ?? 0;
+  return { messages, usage };
 }
 
 async function executeToolCall(
