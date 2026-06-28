@@ -43,10 +43,12 @@ async function main() {
   });
 
   ui.setHistory(store.getUserHistory(session));
+  syncPromptStatus(ui, session, providerId, model, cwd);
   ui.renderBanner(session.id, `${providerId}/${model}`, `${startupMode} | ${session.mode}`);
 
   try {
     for (;;) {
+      syncPromptStatus(ui, session, providerId, model, cwd);
       const input = (await ui.prompt()).trim();
       if (!input) {
         continue;
@@ -66,13 +68,16 @@ async function main() {
         setModel(nextModel) {
           model = nextModel;
           provider = createProvider(config, providerId, model);
+          syncPromptStatus(ui, session, providerId, model, cwd);
         },
         setProvider(nextProviderId) {
           providerId = nextProviderId;
           provider = createProvider(config, providerId, model);
+          syncPromptStatus(ui, session, providerId, model, cwd);
         },
         setSession(nextSession) {
           session = nextSession;
+          syncPromptStatus(ui, session, providerId, model, cwd);
         },
         ui
       });
@@ -141,6 +146,7 @@ async function main() {
         session.model = model;
         store.recordTurn(session, result.usage);
         ui.setHistory(store.getUserHistory(session));
+        syncPromptStatus(ui, session, providerId, model, cwd);
         ui.endTurn();
         const finalAssistantMessage = getFinalAssistantMessage(result.messages);
         if (finalAssistantMessage) {
@@ -396,6 +402,24 @@ function normalizeProviderId(value: string, fallback: ProviderId): ProviderId {
 
 function isProviderId(value: string): value is ProviderId {
   return value === "deepseek" || value === "openai-compatible";
+}
+
+function syncPromptStatus(
+  ui: TerminalUi,
+  session: StoredSession,
+  providerId: ProviderId,
+  model: string,
+  cwd: string
+): void {
+  ui.setPromptStatus({
+    sessionId: session.id,
+    provider: providerId,
+    model,
+    mode: session.mode,
+    cwd,
+    turns: session.metrics.turnCount,
+    tokens: session.metrics.totalTokens
+  });
 }
 
 async function authorizeToolCall(

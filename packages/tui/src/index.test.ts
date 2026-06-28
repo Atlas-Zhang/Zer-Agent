@@ -12,6 +12,21 @@ test("completeInput ignores non-command input", () => {
   assert.deepEqual(hits, []);
 });
 
+test("completeInput suggests command arguments", () => {
+  const [modeHits] = internalForTesting.completeInput("/mode p", ["/mode"]);
+  const [providerHits] = internalForTesting.completeInput("/provider open", ["/provider"]);
+
+  assert.deepEqual(modeHits, ["/mode plan"]);
+  assert.deepEqual(providerHits, ["/provider openai-compatible"]);
+});
+
 test("formatToolBadge wraps the tool name in brackets", () => {
   assert.equal(internalForTesting.formatToolBadge("weather"), "[weather]");
+});
+
+test("compactPath shortens long paths", () => {
+  const compacted = internalForTesting.compactPath("D:/very/long/path/to/a/project/root", 40);
+
+  assert(compacted.startsWith("..."));
+  assert(compacted.length <= 24);
 });

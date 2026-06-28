@@ -4,6 +4,16 @@ import { completeInput, DEFAULT_COMMANDS } from "./commands.js";
 import { renderMarkdownToTerminal } from "./markdown.js";
 import { bold, colorize, dim } from "./theme.js";
 
+export type PromptStatus = {
+  sessionId: string;
+  provider: string;
+  model: string;
+  mode: string;
+  cwd: string;
+  turns: number;
+  tokens: number;
+};
+
 export class TerminalUi {
   private turnActive = false;
   private currentStatus = "thinking";
@@ -11,6 +21,7 @@ export class TerminalUi {
   private spinnerTimer: NodeJS.Timeout | undefined;
   private verbose = false;
   private lastNonTtyStatus = "";
+  private promptStatus: PromptStatus | undefined;
 
   private readonly rl = readline.createInterface({
     input: process.stdin,
@@ -19,6 +30,7 @@ export class TerminalUi {
   });
 
   async prompt(label = "you> "): Promise<string> {
+    this.renderPromptStatus();
     return this.rl.question(colorize("blue", label));
   }
 
@@ -34,9 +46,13 @@ export class TerminalUi {
     target.history = history;
   }
 
+  setPromptStatus(status: PromptStatus): void {
+    this.promptStatus = status;
+  }
+
   renderBanner(sessionId: string, model: string, status?: string): void {
     process.stdout.write(`${bold(colorize("cyan", "Zer-Agent"))} ${dim(`| session=${sessionId} | model=${model}${status ? ` | ${status}` : ""}`)}\n`);
-    process.stdout.write(`${dim("Commands:")} ${colorize("green", "/help")} ${colorize("green", "/new")} ${colorize("green", "/resume <id>")} ${colorize("green", "/model <name>")} ${colorize("green", "/session")} ${colorize("green", "/tools")} ${colorize("green", "/logs")} ${colorize("green", "/verbose")}\n\n`);
+    process.stdout.write(`${dim("Commands:")} ${colorize("green", "/help")} ${colorize("green", "/sessions")} ${colorize("green", "/resume <id>")} ${colorize("green", "/model <name>")} ${colorize("green", "/provider <id>")} ${colorize("green", "/mode <plan|build>")} ${colorize("green", "/tools")} ${colorize("green", "/verbose")} ${dim("| Tab completes commands")}\n\n`);
   }
 
   beginTurn(): void {
@@ -204,11 +220,24 @@ export class TerminalUi {
         break;
     }
   }
+
+  private renderPromptStatus(): void {
+    if (!this.promptStatus) {
+      return;
+    }
+
+    const status = this.promptStatus;
+    const session = status.sessionId.slice(0, 8);
+    const cwd = compactPath(status.cwd, process.stdout.columns ?? 100);
+    process.stdout.write(dim(`${cwd} | ${status.provider}/${status.model} | ${status.mode} | session=${session} | turns=${status.turns} | tokens=${status.tokens}`));
+    process.stdout.write("\n");
+  }
 }
 
 export const internalForTesting = {
   completeInput,
   formatToolBadge,
+  compactPath,
   renderMarkdownToTerminal
 };
 
@@ -224,4 +253,13 @@ function firstRenderedLine(rendered: string): string {
     return firstLine ?? "";
   }
   return firstLine ?? "";
+}
+
+function compactPath(path: string, width: number): string {
+  const maxLength = Math.max(24, Math.min(60, Math.floor(width * 0.45)));
+  if (path.length <= maxLength) {
+    return path;
+  }
+
+  return `...${path.slice(-(maxLength - 3))}`;
 }
