@@ -22,12 +22,14 @@ test("resolveSafePath blocks writes to protected paths", () => {
 
 test("createBuiltInTools only registers external search tools when configured", () => {
   const baseConfig: AppConfig = {
+    provider: "deepseek",
     model: "deepseek-v4-flash",
     sessionDir: "sessions",
     logDir: "logs",
     maxIterations: 8,
     systemPrompt: "prompt",
     deepSeekBaseUrl: "https://api.deepseek.com",
+    openAIBaseUrl: "https://api.openai.com/v1",
     shellContext: "shell",
     searchProvider: "tavily",
     newsProvider: "gnews"

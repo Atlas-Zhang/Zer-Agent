@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ChatMessage, ChatUsage } from "@zer-agent/llm-core";
 
@@ -9,29 +9,58 @@ export type SessionMetrics = {
   totalTokens: number;
 };
 
+export type SessionMode = "build" | "plan";
+
+export type SessionSummary = {
+  id: string;
+  createdAt: string;
+  content: string;
+  messageCount: number;
+};
+
+export type SessionSnapshot = {
+  id: string;
+  createdAt: string;
+  path: string;
+  before: string;
+  after: string;
+};
+
 export type StoredSession = {
   id: string;
+  provider: string;
   model: string;
+  mode: SessionMode;
+  title?: string;
   cwd: string;
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
+  summaries: SessionSummary[];
+  snapshots: SessionSnapshot[];
+  permissionDecisions: Record<string, "allow" | "deny">;
   metrics: SessionMetrics;
 };
 
 export class SessionStore {
   constructor(private readonly sessionDir: string) {}
 
-  create(model: string, cwd: string): StoredSession {
+  create(model: string, cwd: string, provider = "deepseek", mode: SessionMode = "build"): StoredSession {
     mkdirSync(this.sessionDir, { recursive: true });
     const timestamp = new Date().toISOString();
     const session: StoredSession = {
       id: crypto.randomUUID(),
+      provider,
       model,
+      mode,
       cwd,
       createdAt: timestamp,
       updatedAt: timestamp,
+      title: undefined,
       messages: [],
+      summaries: [],
+      snapshots: [],
+      permissionDecisions: {},
       metrics: {
         turnCount: 0,
         inputTokens: 0,
@@ -83,6 +112,34 @@ export class SessionStore {
     return session;
   }
 
+  delete(sessionId: string): boolean {
+    const path = this.getPath(sessionId);
+    if (!existsSync(path)) {
+      return false;
+    }
+
+    unlinkSync(path);
+    return true;
+  }
+
+  fork(session: StoredSession): StoredSession {
+    const timestamp = new Date().toISOString();
+    const forked: StoredSession = {
+      ...session,
+      id: crypto.randomUUID(),
+      title: session.title ? `${session.title} (fork)` : undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      messages: [...session.messages],
+      summaries: [...session.summaries],
+      snapshots: [...session.snapshots],
+      permissionDecisions: { ...session.permissionDecisions },
+      metrics: { ...session.metrics }
+    };
+    this.save(forked);
+    return forked;
+  }
+
   getUserHistory(session: StoredSession, limit = 100): string[] {
     const history = session.messages
       .filter((message) => message.role === "user")
@@ -112,11 +169,17 @@ export class SessionStore {
     const derivedTurnCount = messages.filter((message) => message.role === "user").length;
     return {
       id: session.id ?? crypto.randomUUID(),
+      provider: session.provider ?? "deepseek",
       model: session.model ?? "deepseek-v4-flash",
+      mode: session.mode === "plan" ? "plan" : "build",
+      title: session.title,
       cwd: session.cwd ?? process.cwd(),
       createdAt: session.createdAt ?? timestamp,
       updatedAt: session.updatedAt ?? timestamp,
       messages,
+      summaries: Array.isArray(session.summaries) ? session.summaries : [],
+      snapshots: Array.isArray(session.snapshots) ? session.snapshots : [],
+      permissionDecisions: session.permissionDecisions ?? {},
       metrics: {
         turnCount: session.metrics?.turnCount ?? derivedTurnCount,
         inputTokens: session.metrics?.inputTokens ?? 0,

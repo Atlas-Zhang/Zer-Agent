@@ -26,6 +26,30 @@ test("session store creates, saves, loads, and lists sessions", () => {
   }
 });
 
+test("session store preserves provider and mode metadata", () => {
+  const root = mkdtempSync(join(tmpdir(), "zer-agent-session-"));
+  try {
+    const store = new SessionStore(root);
+    const session = store.create("gpt-4.1-mini", process.cwd(), "openai-compatible", "plan");
+    session.title = "metadata test";
+    session.summaries.push({
+      id: "summary_1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      content: "summary",
+      messageCount: 4
+    });
+    store.save(session);
+
+    const loaded = store.load(session.id);
+    assert.equal(loaded.provider, "openai-compatible");
+    assert.equal(loaded.mode, "plan");
+    assert.equal(loaded.title, "metadata test");
+    assert.equal(loaded.summaries[0]?.content, "summary");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("session store finds latest session for cwd and returns user history", () => {
   const root = mkdtempSync(join(tmpdir(), "zer-agent-session-"));
   const store = new SessionStore(root);

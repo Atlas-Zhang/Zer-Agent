@@ -55,6 +55,14 @@ export interface LlmProvider {
   stream?(options: GenerateOptions): AsyncIterable<StreamChunk>;
 }
 
+export type OpenAICompatibleProviderOptions = {
+  name?: string;
+  apiKey: string;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+  defaultModel?: string;
+};
+
 export type DeepSeekProviderOptions = {
   apiKey: string;
   baseUrl?: string;
@@ -110,8 +118,8 @@ export class DeepSeekProvider implements LlmProvider {
       },
       body: JSON.stringify({
         model: options.model || this.defaultModel,
-        messages: this.toWireMessages(options.messages, options.systemPrompt),
-        tools: options.tools?.map((tool) => this.toWireTool(tool)),
+        messages: toWireMessages(options.messages, options.systemPrompt),
+        tools: options.tools?.map(toWireTool),
         temperature: options.temperature,
         max_tokens: options.maxTokens,
         reasoning_effort: options.reasoningEffort,
@@ -120,106 +128,146 @@ export class DeepSeekProvider implements LlmProvider {
       })
     });
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`DeepSeek request failed: ${response.status} ${response.statusText}${errorBody ? ` - ${errorBody}` : ""}`);
-    }
+    return parseChatCompletionResponse(response, "DeepSeek");
+  }
+}
 
-    const payload = await response.json() as {
-      choices?: Array<{
-        finish_reason?: string;
-        message?: {
-          role?: ChatRole;
-          content?: string;
-          reasoning_content?: string;
-          tool_calls?: Array<{
-            id?: string;
-            function?: {
-              name?: string;
-              arguments?: string;
-            };
-          }>;
-        };
-      }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-      };
-    };
+export class OpenAICompatibleProvider implements LlmProvider {
+  readonly name: string;
+  readonly defaultModel: string;
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly fetchImpl: typeof fetch;
 
-    const choice = payload.choices?.[0];
-    const message = choice?.message;
-    const parsedToolCalls = message?.tool_calls?.map((call, index) => ({
-      id: call.id ?? `tool_call_${index}`,
-      name: call.function?.name ?? "unknown",
-      arguments: safeJsonParse(call.function?.arguments)
-    })) ?? [];
-    const inferredToolCalls = parsedToolCalls.length > 0 ? [] : parseDsmlToolCalls(message?.content);
-    const normalizedToolCalls = parsedToolCalls.length > 0 ? parsedToolCalls : inferredToolCalls;
-    const responseToolCalls = normalizedToolCalls.length > 0 ? normalizedToolCalls : undefined;
-    const normalizedContent = inferredToolCalls.length > 0
-      ? stripDsmlToolCalls(message?.content ?? "")
-      : (message?.content ?? "");
-
-    return {
-      message: {
-        role: message?.role ?? "assistant",
-        content: normalizedContent,
-        toolCalls: responseToolCalls,
-        reasoningContent: message?.reasoning_content
-      },
-      toolCalls: responseToolCalls,
-      usage: {
-        inputTokens: payload.usage?.prompt_tokens,
-        outputTokens: payload.usage?.completion_tokens,
-        totalTokens: payload.usage?.total_tokens
-      },
-      finishReason: choice?.finish_reason
-    };
+  constructor(options: OpenAICompatibleProviderOptions) {
+    this.name = options.name ?? "openai-compatible";
+    this.apiKey = options.apiKey;
+    this.baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.defaultModel = options.defaultModel ?? "gpt-4.1-mini";
   }
 
-  private toWireMessages(messages: ChatMessage[], systemPrompt?: string): DeepSeekMessage[] {
-    const wireMessages = messages.map((message) => {
-      const wireMessage: DeepSeekMessage = {
-        role: message.role,
-        content: message.content,
-        name: message.name,
-        tool_call_id: message.toolCallId,
-        reasoning_content: message.reasoningContent
-      };
-
-      if (message.toolCalls?.length) {
-        wireMessage.tool_calls = message.toolCalls.map((call) => ({
-          id: call.id,
-          type: "function" as const,
-          function: {
-            name: call.name,
-            arguments: JSON.stringify(call.arguments)
-          }
-        }));
-      }
-
-      return wireMessage;
+  async generate(options: GenerateOptions): Promise<ChatResponse> {
+    const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: options.model || this.defaultModel,
+        messages: toWireMessages(options.messages, options.systemPrompt),
+        tools: options.tools?.map(toWireTool),
+        temperature: options.temperature,
+        max_tokens: options.maxTokens,
+        stream: false
+      })
     });
 
-    if (systemPrompt) {
-      return [{ role: "system", content: systemPrompt }, ...wireMessages];
+    return parseChatCompletionResponse(response, "OpenAI-compatible");
+  }
+}
+
+function toWireMessages(messages: ChatMessage[], systemPrompt?: string): DeepSeekMessage[] {
+  const wireMessages = messages.map((message) => {
+    const wireMessage: DeepSeekMessage = {
+      role: message.role,
+      content: message.content,
+      name: message.name,
+      tool_call_id: message.toolCallId,
+      reasoning_content: message.reasoningContent
+    };
+
+    if (message.toolCalls?.length) {
+      wireMessage.tool_calls = message.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: {
+          name: call.name,
+          arguments: JSON.stringify(call.arguments)
+        }
+      }));
     }
 
-    return wireMessages;
+    return wireMessage;
+  });
+
+  if (systemPrompt) {
+    return [{ role: "system", content: systemPrompt }, ...wireMessages];
   }
 
-  private toWireTool(tool: ToolSchema): DeepSeekTool {
-    return {
-      type: "function",
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.input
-      }
-    };
+  return wireMessages;
+}
+
+function toWireTool(tool: ToolSchema): DeepSeekTool {
+  return {
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input
+    }
+  };
+}
+
+async function parseChatCompletionResponse(response: Response, providerName: string): Promise<ChatResponse> {
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`${providerName} request failed: ${response.status} ${response.statusText}${errorBody ? ` - ${errorBody}` : ""}`);
   }
+
+  const payload = await response.json() as {
+    choices?: Array<{
+      finish_reason?: string;
+      message?: {
+        role?: ChatRole;
+        content?: string;
+        reasoning_content?: string;
+        tool_calls?: Array<{
+          id?: string;
+          function?: {
+            name?: string;
+            arguments?: string;
+          };
+        }>;
+      };
+    }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+  };
+
+  const choice = payload.choices?.[0];
+  const message = choice?.message;
+  const parsedToolCalls = message?.tool_calls?.map((call, index) => ({
+    id: call.id ?? `tool_call_${index}`,
+    name: call.function?.name ?? "unknown",
+    arguments: safeJsonParse(call.function?.arguments)
+  })) ?? [];
+  const inferredToolCalls = parsedToolCalls.length > 0 ? [] : parseDsmlToolCalls(message?.content);
+  const normalizedToolCalls = parsedToolCalls.length > 0 ? parsedToolCalls : inferredToolCalls;
+  const responseToolCalls = normalizedToolCalls.length > 0 ? normalizedToolCalls : undefined;
+  const normalizedContent = inferredToolCalls.length > 0
+    ? stripDsmlToolCalls(message?.content ?? "")
+    : (message?.content ?? "");
+
+  return {
+    message: {
+      role: message?.role ?? "assistant",
+      content: normalizedContent,
+      toolCalls: responseToolCalls,
+      reasoningContent: message?.reasoning_content
+    },
+    toolCalls: responseToolCalls,
+    usage: {
+      inputTokens: payload.usage?.prompt_tokens,
+      outputTokens: payload.usage?.completion_tokens,
+      totalTokens: payload.usage?.total_tokens
+    },
+    finishReason: choice?.finish_reason
+  };
 }
 
 function safeJsonParse(value: string | undefined): Record<string, unknown> {

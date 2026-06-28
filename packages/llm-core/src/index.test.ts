@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DeepSeekProvider } from "./index.js";
+import { DeepSeekProvider, OpenAICompatibleProvider } from "./index.js";
 
 test("DeepSeek provider normalizes tool calls", async () => {
   const provider = new DeepSeekProvider({
@@ -216,4 +216,57 @@ test("DeepSeek provider infers mangled DSML tool calls from assistant content", 
   assert.equal(response.toolCalls?.[0]?.name, "web_search");
   assert.equal(response.toolCalls?.[0]?.arguments.maxResults, 3);
   assert.equal(response.message.content, "Need a better source.");
+});
+
+test("OpenAI-compatible provider serializes tool calls", async () => {
+  const capturedBodies: string[] = [];
+  const provider = new OpenAICompatibleProvider({
+    apiKey: "test-key",
+    baseUrl: "https://api.example.com/v1",
+    defaultModel: "test-model",
+    fetchImpl: async (_input, init) => {
+      capturedBodies.push(String(init?.body ?? ""));
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: "done"
+            }
+          }
+        ],
+        usage: {
+          prompt_tokens: 2,
+          completion_tokens: 3,
+          total_tokens: 5
+        }
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  const response = await provider.generate({
+    model: "test-model",
+    messages: [{ role: "user", content: "weather" }],
+    tools: [
+      {
+        name: "weather",
+        description: "Weather",
+        input: { type: "object", properties: {} }
+      }
+    ]
+  });
+
+  const request = JSON.parse(capturedBodies[0] ?? "{}") as {
+    model?: string;
+    tools?: Array<{ function?: { name?: string } }>;
+    thinking?: unknown;
+  };
+  assert.equal(request.model, "test-model");
+  assert.equal(request.tools?.[0]?.function?.name, "weather");
+  assert.equal(request.thinking, undefined);
+  assert.equal(response.usage?.totalTokens, 5);
 });

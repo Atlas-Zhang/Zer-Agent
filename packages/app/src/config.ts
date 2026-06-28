@@ -3,18 +3,23 @@ import { resolve } from "node:path";
 import { config as loadDotEnv } from "dotenv";
 
 export type AppConfig = {
+  provider: ProviderId;
   model: string;
   sessionDir: string;
   logDir: string;
   maxIterations: number;
   systemPrompt: string;
   deepSeekBaseUrl: string;
+  openAIBaseUrl: string;
   shellContext: string;
   searchProvider: "tavily";
   newsProvider: "gnews";
   tavilyApiKey?: string;
   gnewsApiKey?: string;
+  openAIApiKey?: string;
 };
+
+export type ProviderId = "deepseek" | "openai-compatible";
 
 const DEFAULT_SYSTEM_PROMPT = [
   "You are Zer-Agent, a terminal coding assistant.",
@@ -44,17 +49,20 @@ export function loadAppConfig(cwd: string): AppConfig {
     : {};
 
   return {
+    provider: readProviderId(process.env.ZER_AGENT_PROVIDER ?? fileConfig.provider),
     model: process.env.ZER_AGENT_MODEL ?? fileConfig.model ?? "deepseek-v4-flash",
     sessionDir: resolve(cwd, process.env.ZER_AGENT_SESSION_DIR ?? fileConfig.sessionDir ?? ".zer-agent/sessions"),
     logDir: resolve(cwd, process.env.ZER_AGENT_LOG_DIR ?? fileConfig.logDir ?? ".zer-agent/logs"),
     maxIterations: readPositiveInteger(process.env.ZER_AGENT_MAX_ITERATIONS) ?? fileConfig.maxIterations ?? 8,
     systemPrompt: process.env.ZER_AGENT_SYSTEM_PROMPT ?? fileConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     deepSeekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? fileConfig.deepSeekBaseUrl ?? "https://api.deepseek.com",
+    openAIBaseUrl: process.env.OPENAI_BASE_URL ?? fileConfig.openAIBaseUrl ?? "https://api.openai.com/v1",
     shellContext: fileConfig.shellContext ?? DEFAULT_SHELL_CONTEXT,
     searchProvider: "tavily",
     newsProvider: "gnews",
     tavilyApiKey: readOptionalEnv("TAVILY_API_KEY"),
-    gnewsApiKey: readOptionalEnv("GNEWS_API_KEY")
+    gnewsApiKey: readOptionalEnv("GNEWS_API_KEY"),
+    openAIApiKey: readOptionalEnv("OPENAI_API_KEY")
   };
 }
 
@@ -66,6 +74,18 @@ export function readDeepSeekApiKey(): string {
   }
 
   return apiKey;
+}
+
+export function readProviderApiKey(config: AppConfig): string {
+  if (config.provider === "openai-compatible") {
+    if (!config.openAIApiKey) {
+      throw new Error("Missing OPENAI_API_KEY. Set it in .env or the process environment.");
+    }
+
+    return config.openAIApiKey;
+  }
+
+  return readDeepSeekApiKey();
 }
 
 function ensureEnvLoaded(cwd: string): void {
@@ -99,4 +119,12 @@ function readPositiveInteger(value: string | undefined): number | undefined {
   }
 
   return parsed;
+}
+
+function readProviderId(value: string | undefined): ProviderId {
+  if (value === "openai-compatible" || value === "deepseek") {
+    return value;
+  }
+
+  return "deepseek";
 }

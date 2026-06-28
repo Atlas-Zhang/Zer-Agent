@@ -3,12 +3,13 @@
 import { mkdirSync } from "node:fs";
 import process from "node:process";
 import { runTurn } from "@zer-agent/agent-core";
-import { DeepSeekProvider } from "@zer-agent/llm-core";
+import type { LlmProvider } from "@zer-agent/llm-core";
 import { TerminalUi } from "@zer-agent/tui";
-import { loadAppConfig, readDeepSeekApiKey } from "./config.js";
+import { loadAppConfig, type ProviderId } from "./config.js";
 import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
+import { createProvider, listProviderIds } from "./provider-registry.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
 import { createBuiltInTools, describeAvailableTools } from "./tools.js";
 
@@ -21,21 +22,19 @@ async function main() {
   const ui = new TerminalUi();
   const store = new SessionStore(config.sessionDir);
   const logger = new AppLogger(config.logDir);
-  const provider = new DeepSeekProvider({
-    apiKey: readDeepSeekApiKey(),
-    baseUrl: config.deepSeekBaseUrl,
-    defaultModel: config.model
-  });
 
-  let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd);
+  let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd, config.provider);
   session = repairAndPersistSessionIfNeeded(session, store, logger);
   let model = session.model;
+  let providerId = normalizeProviderId(session.provider, config.provider);
+  let provider = createProvider(config, providerId, model);
   const tools = createBuiltInTools({ cwd, config });
   const toolInventoryPrompt = describeAvailableTools(tools);
   const startupMode = session.messages.length > 0 ? "resumed" : "new";
   logger.info("app.start", {
     cwd,
     model,
+    provider: providerId,
     sessionId: session.id,
     toolNames: tools.map((tool) => tool.name),
     maxIterations: config.maxIterations,
@@ -43,7 +42,7 @@ async function main() {
   });
 
   ui.setHistory(store.getUserHistory(session));
-  ui.renderBanner(session.id, model, startupMode);
+  ui.renderBanner(session.id, `${providerId}/${model}`, `${startupMode} | ${session.mode}`);
 
   try {
     for (;;) {
@@ -59,10 +58,17 @@ async function main() {
       const commandHandled = await handleCommand(input, {
         cwd,
         model,
+        provider,
+        providerId,
         session,
         store,
         setModel(nextModel) {
           model = nextModel;
+          provider = createProvider(config, providerId, model);
+        },
+        setProvider(nextProviderId) {
+          providerId = nextProviderId;
+          provider = createProvider(config, providerId, model);
         },
         setSession(nextSession) {
           session = nextSession;
@@ -78,6 +84,7 @@ async function main() {
       session.messages = repairConversationHistory(session.messages);
       logger.info("turn.start", {
         sessionId: session.id,
+        provider: providerId,
         model,
         input
       });
@@ -137,9 +144,12 @@ async function main() {
 type CommandContext = {
   cwd: string;
   model: string;
+  provider: LlmProvider;
+  providerId: ProviderId;
   session: StoredSession;
   store: SessionStore;
   setModel: (model: string) => void;
+  setProvider: (providerId: ProviderId) => void;
   setSession: (session: StoredSession) => void;
   ui: TerminalUi;
 };
@@ -152,11 +162,11 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
-        const nextSession = context.store.create(context.model, context.cwd);
+        const nextSession = context.store.create(context.model, context.cwd, context.providerId);
         context.setSession(nextSession);
         context.ui.setHistory(context.store.getUserHistory(nextSession));
         context.ui.info(`Started session ${nextSession.id}`);
@@ -173,6 +183,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       const repaired = repairAndPersistSessionIfNeeded(loaded, context.store);
       context.setSession(repaired);
       context.setModel(repaired.model);
+      context.setProvider(normalizeProviderId(repaired.provider, context.providerId));
       context.ui.setHistory(context.store.getUserHistory(repaired));
       context.ui.info(`Resumed session ${repaired.id}`);
       return true;
@@ -192,8 +203,24 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.ui.info(`Model set to ${nextModel}`);
       return true;
     }
+    case "/provider": {
+      const nextProvider = rest[0];
+      if (!nextProvider) {
+        context.ui.info(`Current provider: ${context.providerId}. Available: ${listProviderIds().join(", ")}`);
+        return true;
+      }
+      if (!isProviderId(nextProvider)) {
+        context.ui.info(`Unknown provider: ${nextProvider}. Available: ${listProviderIds().join(", ")}`);
+        return true;
+      }
+      context.setProvider(nextProvider);
+      context.session.provider = nextProvider;
+      context.store.save(context.session);
+      context.ui.info(`Provider set to ${nextProvider}`);
+      return true;
+    }
     case "/session":
-      context.ui.info(formatSessionSummary(context.session, context.model, context.cwd));
+      context.ui.info(formatSessionSummary(context.session, context.model, context.providerId, context.cwd));
       return true;
     case "/tools":
       context.ui.info(describeAvailableTools(createBuiltInTools({
@@ -212,20 +239,31 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   }
 }
 
-function formatSessionSummary(session: StoredSession, model: string, cwd: string): string {
+function formatSessionSummary(session: StoredSession, model: string, providerId: ProviderId, cwd: string): string {
   const tokenSummary = session.metrics.totalTokens > 0
     ? `${session.metrics.totalTokens} (in=${session.metrics.inputTokens}, out=${session.metrics.outputTokens})`
     : (session.messages.length > 0 ? "untracked for this older session" : "0 (in=0, out=0)");
 
   return [
     `Session ${session.id}`,
+    `provider=${providerId}`,
     `model=${model}`,
+    `mode=${session.mode}`,
+    `title=${session.title ?? "(untitled)"}`,
     `cwd=${cwd}`,
     `turns=${session.metrics.turnCount}`,
     `messages=${session.messages.length}`,
     `tokens=${tokenSummary}`,
     `updated=${session.updatedAt}`
   ].join(" | ");
+}
+
+function normalizeProviderId(value: string, fallback: ProviderId): ProviderId {
+  return isProviderId(value) ? value : fallback;
+}
+
+function isProviderId(value: string): value is ProviderId {
+  return value === "deepseek" || value === "openai-compatible";
 }
 
 function repairAndPersistSessionIfNeeded(
