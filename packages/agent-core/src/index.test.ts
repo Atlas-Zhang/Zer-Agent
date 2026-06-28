@@ -186,6 +186,56 @@ test("runTurn records authorization denial as a tool result", async () => {
   assert.equal(result.messages.at(-1)?.content, "I could not write the file.");
 });
 
+test("runTurn reports partial messages as a turn progresses", async () => {
+  const snapshots: number[] = [];
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate() {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: { role: "assistant", content: "" },
+          toolCalls: [
+            {
+              id: "call_1",
+              name: "read_file",
+              arguments: { path: "README.md" }
+            }
+          ]
+        };
+      }
+
+      return {
+        message: { role: "assistant", content: "Done." }
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "read" }],
+    tools: [
+      {
+        name: "read_file",
+        description: "Read file",
+        input: {},
+        async execute() {
+          return { content: "file content" };
+        }
+      }
+    ],
+    onMessagesChanged(messages) {
+      snapshots.push(messages.length);
+    }
+  });
+
+  assert.deepEqual(snapshots, [2, 3, 4]);
+  assert.equal(result.messages.at(-1)?.content, "Done.");
+});
+
 test("runTurn makes a final no-tool attempt after iteration exhaustion", async () => {
   let calls = 0;
   const provider: LlmProvider = {

@@ -140,6 +140,39 @@ test("DeepSeek provider omits empty assistant tool call arrays", async () => {
   assert.equal(response.message.toolCalls, undefined);
 });
 
+test("DeepSeek provider forwards abort signal to fetch", async () => {
+  const controller = new AbortController();
+  let capturedSignal: AbortSignal | undefined;
+  const provider = new DeepSeekProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_input, init) => {
+      capturedSignal = init?.signal as AbortSignal | undefined;
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: "done"
+            }
+          }
+        ]
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  await provider.generate({
+    model: "deepseek-v4-flash",
+    messages: [{ role: "user", content: "hello" }],
+    signal: controller.signal
+  });
+
+  assert.equal(capturedSignal, controller.signal);
+});
+
 test("DeepSeek provider infers DSML tool calls from assistant content", async () => {
   const provider = new DeepSeekProvider({
     apiKey: "test-key",

@@ -7,6 +7,11 @@ test("completeInput suggests slash commands by prefix", () => {
   assert.deepEqual(hits, ["/model"]);
 });
 
+test("completeInput includes clear command", () => {
+  const [hits] = internalForTesting.completeInput("/cl", ["/help", "/clear", "/compact"]);
+  assert.deepEqual(hits, ["/clear"]);
+});
+
 test("completeInput ignores non-command input", () => {
   const [hits] = internalForTesting.completeInput("hello", ["/help"]);
   assert.deepEqual(hits, []);

@@ -41,9 +41,11 @@ export type RunTurnOptions = {
   tools: AgentTool[];
   maxIterations?: number;
   onEvent?: (event: AgentEvent) => void;
+  onMessagesChanged?: (messages: ChatMessage[]) => void;
   authorizeToolCall?: (tool: AgentTool, args: Record<string, unknown>) => Promise<ToolResult | undefined>;
   continueOnUnknownTool?: boolean;
   finalAttemptOnExhaustion?: boolean;
+  signal?: AbortSignal;
 };
 
 export type TurnResult = {
@@ -75,11 +77,13 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
       model: options.model,
       messages,
       systemPrompt: options.systemPrompt,
-      tools: toolSchemas
+      tools: toolSchemas,
+      signal: options.signal
     });
 
     const assistantMessage = response.message;
     messages.push(assistantMessage);
+    options.onMessagesChanged?.([...messages]);
     options.onEvent?.({ type: "assistant", message: assistantMessage, usage: response.usage });
     usage.inputTokens += response.usage?.inputTokens ?? 0;
     usage.outputTokens += response.usage?.outputTokens ?? 0;
@@ -107,6 +111,7 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
             toolCallId: call.id,
             content: `Tool ${call.name} is unavailable in this session.`
           });
+          options.onMessagesChanged?.([...messages]);
           continue;
         }
         throw error;
@@ -122,6 +127,7 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
           toolCallId: call.id,
           content: authorizationResult.content
         });
+        options.onMessagesChanged?.([...messages]);
         continue;
       }
 
@@ -133,6 +139,7 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
         toolCallId: call.id,
         content: result.content
       });
+      options.onMessagesChanged?.([...messages]);
     }
   }
 
@@ -170,7 +177,8 @@ async function requestFinalAnswer(
       "Do not call any more tools.",
       "Do not emit function calls, tool_calls, DSML/XML tool markup, or JSON tool requests.",
       "Provide the best final answer you can from the information already gathered."
-    ].join("\n\n")
+    ].join("\n\n"),
+    signal: options.signal
   });
 
   const recoveryMessage = recoveryResponse.toolCalls?.length || !recoveryResponse.message.content.trim()
@@ -182,6 +190,7 @@ async function requestFinalAnswer(
     : recoveryResponse.message;
 
   messages.push(recoveryMessage);
+  options.onMessagesChanged?.([...messages]);
   options.onEvent?.({ type: "assistant", message: recoveryMessage, usage: recoveryResponse.usage });
   usage.inputTokens += recoveryResponse.usage?.inputTokens ?? 0;
   usage.outputTokens += recoveryResponse.usage?.outputTokens ?? 0;

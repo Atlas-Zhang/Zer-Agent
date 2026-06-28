@@ -7,6 +7,7 @@ export const DEFAULT_COMMANDS = [
   "/provider",
   "/mode",
   "/compact",
+  "/clear",
   "/session",
   "/tools",
   "/logs",

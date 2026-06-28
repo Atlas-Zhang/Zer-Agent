@@ -47,6 +47,7 @@ export type GenerateOptions = {
   temperature?: number;
   maxTokens?: number;
   reasoningEffort?: "low" | "medium" | "high";
+  signal?: AbortSignal;
 };
 
 export interface LlmProvider {
@@ -112,6 +113,7 @@ export class DeepSeekProvider implements LlmProvider {
   async generate(options: GenerateOptions): Promise<ChatResponse> {
     const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
       method: "POST",
+      signal: options.signal,
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json"
@@ -150,6 +152,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
   async generate(options: GenerateOptions): Promise<ChatResponse> {
     const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
       method: "POST",
+      signal: options.signal,
       headers: {
         "Authorization": `Bearer ${this.apiKey}`,
         "Content-Type": "application/json"

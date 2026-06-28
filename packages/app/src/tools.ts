@@ -14,6 +14,7 @@ type ToolContext = {
   cwd: string;
   config: AppConfig;
   fetchImpl?: typeof fetch;
+  getAbortSignal?: () => AbortSignal | undefined;
 };
 
 export function createBuiltInTools(context: ToolContext): AgentTool[] {
@@ -163,7 +164,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
           "!dist",
           query,
           context.cwd
-        ]);
+        ], 30000, undefined, context.getAbortSignal?.());
 
         return { content: stdout || stderr || "(no matches)" };
       }
@@ -225,7 +226,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
           ? ["-NoProfile", "-Command", normalizedCommand]
           : ["-lc", normalizedCommand];
 
-        const { stdout, stderr } = await runProcess(shell, shellArgs, timeoutMs, context.cwd);
+        const { stdout, stderr } = await runProcess(shell, shellArgs, timeoutMs, context.cwd, context.getAbortSignal?.());
         return { content: [stdout, stderr].filter(Boolean).join("\n").trim() || "(no output)" };
       }
     },
@@ -235,7 +236,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
       permissionCategory: "git",
       input: objectSchema({}, []),
       async execute() {
-        const { stdout } = await runProcess("git", ["status", "--short"], 30000, context.cwd);
+        const { stdout } = await runProcess("git", ["status", "--short"], 30000, context.cwd, context.getAbortSignal?.());
         return { content: stdout || "(clean)" };
       }
     },
@@ -245,7 +246,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
       permissionCategory: "git",
       input: objectSchema({}, []),
       async execute() {
-        const { stdout } = await runProcess("git", ["diff", "--stat"], 30000, context.cwd);
+        const { stdout } = await runProcess("git", ["diff", "--stat"], 30000, context.cwd, context.getAbortSignal?.());
         return { content: stdout || "(no diff)" };
       }
     }
@@ -267,7 +268,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
           context.config.tavilyApiKey!,
           query,
           maxResults,
-          context.fetchImpl ?? fetch
+          createAbortableFetch(context.fetchImpl ?? fetch, context.getAbortSignal?.())
         );
 
         return {
@@ -287,7 +288,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
       location: stringSchema("City, region, or place name.")
     }, ["location"]),
     async execute(args) {
-      const result = await lookupWeather(toStringArg(args.location), context.fetchImpl ?? fetch);
+      const result = await lookupWeather(toStringArg(args.location), createAbortableFetch(context.fetchImpl ?? fetch, context.getAbortSignal?.()));
       return {
         content: result.summary,
         details: result.details
@@ -309,7 +310,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
           context.config.gnewsApiKey!,
           toStringArg(args.query),
           normalizeMaxResults(args.maxResults),
-          context.fetchImpl ?? fetch
+          createAbortableFetch(context.fetchImpl ?? fetch, context.getAbortSignal?.())
         );
         return {
           content: result.summary,
@@ -348,12 +349,21 @@ export const internalForTesting = {
   describeAvailableTools
 };
 
-async function runProcess(command: string, args: string[], timeout = 30000, cwd?: string) {
+async function runProcess(command: string, args: string[], timeout = 30000, cwd?: string, signal?: AbortSignal) {
   return execFileAsync(command, args, {
     timeout,
     cwd,
+    signal,
     maxBuffer: 1024 * 1024
   });
+}
+
+function createAbortableFetch(fetchImpl: typeof fetch, signal?: AbortSignal): typeof fetch {
+  if (!signal) {
+    return fetchImpl;
+  }
+
+  return (input, init) => fetchImpl(input, { ...init, signal });
 }
 
 function objectSchema(properties: Record<string, unknown>, required: string[]) {

@@ -30,7 +30,12 @@ async function main() {
   let model = session.model;
   let providerId = normalizeProviderId(session.provider, config.provider);
   let provider = createProvider(config, providerId, model);
-  const tools = createBuiltInTools({ cwd, config });
+  let activeAbortController: AbortController | undefined;
+  const tools = createBuiltInTools({
+    cwd,
+    config,
+    getAbortSignal: () => activeAbortController?.signal
+  });
   const startupMode = session.messages.length > 0 ? "resumed" : "new";
   logger.info("app.start", {
     cwd,
@@ -97,7 +102,14 @@ async function main() {
         model,
         input
       });
-      ui.beginTurn();
+      activeAbortController = new AbortController();
+      let partialMessages = [...session.messages];
+      ui.beginTurn(() => {
+        if (!activeAbortController?.signal.aborted) {
+          activeAbortController?.abort();
+          ui.warn("Interrupted. Partial context was saved; send a follow-up like 'continue' to resume.");
+        }
+      });
       try {
         const compacted = await compactSessionIfNeeded(session, provider, model, config);
         if (compacted.compacted) {
@@ -124,6 +136,10 @@ async function main() {
           messages: session.messages,
           tools: activeTools,
           maxIterations: config.maxIterations,
+          signal: activeAbortController.signal,
+          onMessagesChanged(messages) {
+            partialMessages = repairConversationHistory(messages);
+          },
           continueOnUnknownTool: true,
           authorizeToolCall(tool, args) {
             return authorizeToolCall(tool, args, session, config.permissionDefault, ui);
@@ -158,8 +174,29 @@ async function main() {
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        session.messages.pop();
         ui.endTurn();
+        if (isAbortError(error) || activeAbortController.signal.aborted) {
+          const interruptedMessages = partialMessages.length > 0 ? partialMessages : session.messages;
+          session.messages = repairConversationHistory([
+            ...interruptedMessages,
+            {
+              role: "assistant",
+              content: "Interrupted by user. I saved the partial context; send a follow-up such as 'continue' to resume from here."
+            }
+          ]);
+          store.save(session);
+          ui.setHistory(store.getUserHistory(session));
+          syncPromptStatus(ui, session, providerId, model, cwd);
+          logger.warn("turn.interrupted", {
+            sessionId: session.id,
+            model,
+            input,
+            messageCount: session.messages.length
+          });
+          continue;
+        }
+
+        session.messages.pop();
         logger.error("turn.failure", {
           sessionId: session.id,
           model,
@@ -167,6 +204,8 @@ async function main() {
           error: message
         });
         ui.warn(`Turn failed and was not saved: ${message}`);
+      } finally {
+        activeAbortController = undefined;
       }
     }
   } finally {
@@ -195,7 +234,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions /undo /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
@@ -279,6 +318,12 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.ui.info(`Compaction: ${result.reason}`);
       return true;
     }
+    case "/clear":
+      clearSessionContext(context.session);
+      context.store.save(context.session);
+      context.ui.setHistory([]);
+      context.ui.info(`Cleared context for session ${context.session.id}`);
+      return true;
     case "/sessions":
       context.ui.info(formatSessionList(context.store.list()));
       return true;
@@ -517,6 +562,24 @@ function formatPermissionSummary(defaultDecision: PermissionDecision): string {
     "Risky categories: write, shell, network",
     "Set ZER_AGENT_PERMISSION_DEFAULT=allow|ask|deny to change default behavior."
   ].join("\n");
+}
+
+function clearSessionContext(session: StoredSession): void {
+  session.messages = [];
+  session.summaries = [];
+  session.snapshots = [];
+  session.permissionDecisions = {};
+  session.title = undefined;
+  session.metrics = {
+    turnCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || /aborted/i.test(error.message));
 }
 
 function repairAndPersistSessionIfNeeded(

@@ -22,6 +22,7 @@ export class TerminalUi {
   private verbose = false;
   private lastNonTtyStatus = "";
   private promptStatus: PromptStatus | undefined;
+  private interruptHandler: ((chunk: Buffer) => void) | undefined;
 
   private readonly rl = readline.createInterface({
     input: process.stdin,
@@ -55,12 +56,13 @@ export class TerminalUi {
     process.stdout.write(`${dim("Commands:")} ${colorize("green", "/help")} ${colorize("green", "/sessions")} ${colorize("green", "/resume <id>")} ${colorize("green", "/model <name>")} ${colorize("green", "/provider <id>")} ${colorize("green", "/mode <plan|build>")} ${colorize("green", "/tools")} ${colorize("green", "/verbose")} ${dim("| Tab completes commands")}\n\n`);
   }
 
-  beginTurn(): void {
+  beginTurn(onInterrupt?: () => void): void {
     this.turnActive = true;
     this.currentStatus = "thinking";
     this.lastNonTtyStatus = "";
+    this.startInterruptWatcher(onInterrupt);
     if (this.verbose) {
-      this.info("thinking...");
+      process.stdout.write(`${dim("thinking...")}\n`);
       return;
     }
 
@@ -111,6 +113,7 @@ export class TerminalUi {
     }
 
     this.stopSpinner();
+    this.stopInterruptWatcher();
     this.clearStatusLine();
     this.turnActive = false;
     this.currentStatus = "thinking";
@@ -194,6 +197,34 @@ export class TerminalUi {
       this.spinnerTimer = undefined;
     }
     this.spinnerFrameIndex = 0;
+  }
+
+  private startInterruptWatcher(onInterrupt?: () => void): void {
+    this.stopInterruptWatcher();
+    if (!onInterrupt || !process.stdin.isTTY) {
+      return;
+    }
+
+    const input = process.stdin as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void };
+    input.setRawMode?.(true);
+    input.resume();
+    this.interruptHandler = (chunk: Buffer) => {
+      if (chunk.toString("utf8") === "\u001b") {
+        onInterrupt();
+      }
+    };
+    input.on("data", this.interruptHandler);
+  }
+
+  private stopInterruptWatcher(): void {
+    if (!this.interruptHandler) {
+      return;
+    }
+
+    process.stdin.off("data", this.interruptHandler);
+    this.interruptHandler = undefined;
+    const input = process.stdin as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void };
+    input.setRawMode?.(false);
   }
 
   private renderVerboseEvent(event: AgentEvent): void {
