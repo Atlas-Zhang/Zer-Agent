@@ -22,6 +22,7 @@ export type SessionSnapshot = {
   id: string;
   createdAt: string;
   path: string;
+  existedBefore?: boolean;
   before: string;
   after: string;
 };

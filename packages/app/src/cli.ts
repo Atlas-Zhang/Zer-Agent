@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import process from "node:process";
-import { runTurn } from "@zer-agent/agent-core";
+import { runTurn, type AgentTool, type ToolResult } from "@zer-agent/agent-core";
 import type { LlmProvider } from "@zer-agent/llm-core";
 import { TerminalUi } from "@zer-agent/tui";
-import { loadAppConfig, type ProviderId } from "./config.js";
+import { loadAppConfig, type PermissionDecision, type ProviderId } from "./config.js";
 import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
@@ -99,6 +99,9 @@ async function main() {
           tools,
           maxIterations: config.maxIterations,
           continueOnUnknownTool: true,
+          authorizeToolCall(tool, args) {
+            return authorizeToolCall(tool, args, session, config.permissionDefault, ui);
+          },
           onEvent(event) {
             logger.info("turn.event", {
               sessionId: session.id,
@@ -107,6 +110,9 @@ async function main() {
               message: "message" in event ? event.message.content : undefined,
               error: "error" in event ? event.error.message : undefined
             });
+            if (event.type === "tool-result" && !event.result.isError) {
+              recordMutationSnapshot(session, event.result);
+            }
             ui.renderTurnProgress(event);
           }
         });
@@ -162,7 +168,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /permissions /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
@@ -219,6 +225,12 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.ui.info(`Provider set to ${nextProvider}`);
       return true;
     }
+    case "/permissions":
+      context.ui.info(formatPermissionSummary(loadAppConfig(context.cwd).permissionDefault));
+      return true;
+    case "/undo":
+      context.ui.info(undoLastSnapshot(context.session, context.store));
+      return true;
     case "/session":
       context.ui.info(formatSessionSummary(context.session, context.model, context.providerId, context.cwd));
       return true;
@@ -264,6 +276,103 @@ function normalizeProviderId(value: string, fallback: ProviderId): ProviderId {
 
 function isProviderId(value: string): value is ProviderId {
   return value === "deepseek" || value === "openai-compatible";
+}
+
+async function authorizeToolCall(
+  tool: AgentTool,
+  args: Record<string, unknown>,
+  session: StoredSession,
+  defaultDecision: PermissionDecision,
+  ui: TerminalUi
+): Promise<ToolResult | undefined> {
+  const decision = resolvePermissionDecision(tool, defaultDecision);
+  if (decision === "allow") {
+    return undefined;
+  }
+
+  if (decision === "deny" || !process.stdin.isTTY) {
+    return {
+      content: `Permission denied for tool ${tool.name}.`,
+      isError: true,
+      details: {
+        permission: "deny",
+        category: tool.permissionCategory ?? "read"
+      }
+    };
+  }
+
+  const preview = tool.preview ? await tool.preview(args) : undefined;
+  const previewText = preview?.content ? `\n\n${preview.content}` : "";
+  const approved = await ui.confirm(`Run ${tool.name} (${tool.permissionCategory ?? "read"})?${previewText}`);
+  session.permissionDecisions[`${tool.name}:${JSON.stringify(args)}`] = approved ? "allow" : "deny";
+  if (approved) {
+    return undefined;
+  }
+
+  return {
+    content: `User denied tool ${tool.name}.`,
+    isError: true,
+    details: {
+      permission: "deny",
+      category: tool.permissionCategory ?? "read"
+    }
+  };
+}
+
+function resolvePermissionDecision(tool: AgentTool, defaultDecision: PermissionDecision): PermissionDecision {
+  const category = tool.permissionCategory ?? "read";
+  if (category === "read" || category === "git") {
+    return "allow";
+  }
+
+  return defaultDecision;
+}
+
+function recordMutationSnapshot(session: StoredSession, result: ToolResult): void {
+  const details = result.details;
+  if (!details || typeof details.path !== "string" || typeof details.before !== "string" || typeof details.after !== "string") {
+    return;
+  }
+
+  if (details.before === details.after) {
+    return;
+  }
+
+  session.snapshots.push({
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    path: details.path,
+    existedBefore: typeof details.existedBefore === "boolean" ? details.existedBefore : true,
+    before: details.before,
+    after: details.after
+  });
+}
+
+function undoLastSnapshot(session: StoredSession, store: SessionStore): string {
+  const snapshot = session.snapshots.pop();
+  if (!snapshot) {
+    return "No Zer-Agent file mutation snapshot is available to undo.";
+  }
+
+  if (snapshot.existedBefore === false) {
+    if (existsSync(snapshot.path)) {
+      unlinkSync(snapshot.path);
+    }
+  } else {
+    writeFileSync(snapshot.path, snapshot.before, "utf8");
+  }
+
+  store.save(session);
+  return `Undid last file mutation: ${snapshot.path}`;
+}
+
+function formatPermissionSummary(defaultDecision: PermissionDecision): string {
+  return [
+    `Default risky-tool permission: ${defaultDecision}`,
+    "Auto-allowed: read, git",
+    "Risky categories: write, shell, network",
+    "Set ZER_AGENT_PERMISSION_DEFAULT=allow|ask|deny to change default behavior."
+  ].join("\n");
 }
 
 function repairAndPersistSessionIfNeeded(

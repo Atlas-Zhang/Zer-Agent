@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { AppConfig } from "./config.js";
 import { createBuiltInTools, internalForTesting } from "./tools.js";
 
@@ -27,6 +30,7 @@ test("createBuiltInTools only registers external search tools when configured", 
     sessionDir: "sessions",
     logDir: "logs",
     maxIterations: 8,
+    permissionDefault: "ask",
     systemPrompt: "prompt",
     deepSeekBaseUrl: "https://api.deepseek.com",
     openAIBaseUrl: "https://api.openai.com/v1",
@@ -69,4 +73,36 @@ test("describeAvailableTools includes current tool inventory", () => {
 
   assert.match(description, /Available tools in this session/);
   assert.match(description, /weather/);
+});
+
+test("edit_file preview returns diff without mutating", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zer-agent-tools-"));
+  try {
+    const target = join(root, "sample.txt");
+    writeFileSync(target, "old\n", "utf8");
+    const tools = createBuiltInTools({
+      cwd: root,
+      config: {
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        sessionDir: "sessions",
+        logDir: "logs",
+        maxIterations: 8,
+        permissionDefault: "ask",
+        systemPrompt: "prompt",
+        deepSeekBaseUrl: "https://api.deepseek.com",
+        openAIBaseUrl: "https://api.openai.com/v1",
+        shellContext: "shell",
+        searchProvider: "tavily",
+        newsProvider: "gnews"
+      }
+    });
+    const editTool = tools.find((tool) => tool.name === "edit_file");
+    const preview = await editTool?.preview?.({ path: "sample.txt", oldText: "old", newText: "new" });
+
+    assert.match(preview?.content ?? "", /-old/);
+    assert.match(preview?.content ?? "", /\+new/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

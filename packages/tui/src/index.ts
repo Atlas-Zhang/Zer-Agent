@@ -22,6 +22,12 @@ export class TerminalUi {
     return this.rl.question(colorize("blue", label));
   }
 
+  async confirm(message: string): Promise<boolean> {
+    this.endTurn();
+    const answer = (await this.rl.question(`${colorize("yellow", "approve?")} ${message} ${dim("[y/N]")} `)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  }
+
   setHistory(entries: string[]): void {
     const history = [...entries].reverse();
     const target = this.rl as readline.Interface & { history?: string[] };

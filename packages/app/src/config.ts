@@ -8,6 +8,7 @@ export type AppConfig = {
   sessionDir: string;
   logDir: string;
   maxIterations: number;
+  permissionDefault: PermissionDecision;
   systemPrompt: string;
   deepSeekBaseUrl: string;
   openAIBaseUrl: string;
@@ -20,6 +21,7 @@ export type AppConfig = {
 };
 
 export type ProviderId = "deepseek" | "openai-compatible";
+export type PermissionDecision = "allow" | "ask" | "deny";
 
 const DEFAULT_SYSTEM_PROMPT = [
   "You are Zer-Agent, a terminal coding assistant.",
@@ -54,6 +56,7 @@ export function loadAppConfig(cwd: string): AppConfig {
     sessionDir: resolve(cwd, process.env.ZER_AGENT_SESSION_DIR ?? fileConfig.sessionDir ?? ".zer-agent/sessions"),
     logDir: resolve(cwd, process.env.ZER_AGENT_LOG_DIR ?? fileConfig.logDir ?? ".zer-agent/logs"),
     maxIterations: readPositiveInteger(process.env.ZER_AGENT_MAX_ITERATIONS) ?? fileConfig.maxIterations ?? 8,
+    permissionDefault: readPermissionDecision(process.env.ZER_AGENT_PERMISSION_DEFAULT ?? fileConfig.permissionDefault),
     systemPrompt: process.env.ZER_AGENT_SYSTEM_PROMPT ?? fileConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     deepSeekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? fileConfig.deepSeekBaseUrl ?? "https://api.deepseek.com",
     openAIBaseUrl: process.env.OPENAI_BASE_URL ?? fileConfig.openAIBaseUrl ?? "https://api.openai.com/v1",
@@ -127,4 +130,12 @@ function readProviderId(value: string | undefined): ProviderId {
   }
 
   return "deepseek";
+}
+
+function readPermissionDecision(value: string | undefined): PermissionDecision {
+  if (value === "allow" || value === "ask" || value === "deny") {
+    return value;
+  }
+
+  return "ask";
 }

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { AgentTool } from "@zer-agent/agent-core";
@@ -20,6 +20,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "list_files",
       description: "List files and directories under a relative path.",
+      permissionCategory: "read",
       input: objectSchema({
         path: stringSchema("Relative path from the project root.")
       }, ["path"]),
@@ -34,6 +35,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "read_file",
       description: "Read a UTF-8 text file.",
+      permissionCategory: "read",
       input: objectSchema({
         path: stringSchema("Relative file path.")
       }, ["path"]),
@@ -45,11 +47,35 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "edit_file",
       description: "Apply a targeted string replacement within a UTF-8 text file.",
+      permissionCategory: "write",
+      mutatesFileSystem: true,
       input: objectSchema({
         path: stringSchema("Relative file path."),
         oldText: stringSchema("Exact existing text to replace."),
         newText: stringSchema("Replacement text.")
       }, ["path", "oldText", "newText"]),
+      async preview(args) {
+        const targetPath = resolveSafePath(context.cwd, toStringArg(args.path));
+        const oldText = toStringArg(args.oldText);
+        const newText = toStringArg(args.newText);
+        const current = readFileSync(targetPath, "utf8");
+
+        if (!current.includes(oldText)) {
+          throw new Error("oldText was not found in the target file.");
+        }
+
+        const updated = current.replace(oldText, newText);
+        return {
+          content: createUnifiedDiff(targetPath, current, updated),
+          details: {
+            path: targetPath,
+            operation: "replace",
+            existedBefore: true,
+            before: current,
+            after: updated
+          }
+        };
+      },
       async execute(args) {
         const targetPath = resolveSafePath(context.cwd, toStringArg(args.path));
         const oldText = toStringArg(args.oldText);
@@ -63,10 +89,13 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
         const updated = current.replace(oldText, newText);
         writeFileSync(targetPath, updated, "utf8");
         return {
-          content: `Edited ${targetPath}`,
+          content: `Edited ${targetPath}\n\n${createUnifiedDiff(targetPath, current, updated)}`,
           details: {
             path: targetPath,
-            operation: "replace"
+            operation: "replace",
+            existedBefore: true,
+            before: current,
+            after: updated
           }
         };
       }
@@ -74,19 +103,43 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "write_file",
       description: "Write a UTF-8 text file, creating parent directories as needed.",
+      permissionCategory: "write",
+      mutatesFileSystem: true,
       input: objectSchema({
         path: stringSchema("Relative file path."),
         content: stringSchema("Full file content.")
       }, ["path", "content"]),
-      async execute(args) {
+      async preview(args) {
         const targetPath = resolveSafePath(context.cwd, toStringArg(args.path));
-        mkdirSync(dirname(targetPath), { recursive: true });
-        writeFileSync(targetPath, toStringArg(args.content), "utf8");
+        const existedBefore = existsSync(targetPath);
+        const before = existedBefore ? readFileSync(targetPath, "utf8") : "";
+        const after = toStringArg(args.content);
         return {
-          content: `Wrote ${targetPath}`,
+          content: createUnifiedDiff(targetPath, before, after),
           details: {
             path: targetPath,
-            operation: "write"
+            operation: "write",
+            existedBefore,
+            before,
+            after
+          }
+        };
+      },
+      async execute(args) {
+        const targetPath = resolveSafePath(context.cwd, toStringArg(args.path));
+        const existedBefore = existsSync(targetPath);
+        const before = existedBefore ? readFileSync(targetPath, "utf8") : "";
+        const after = toStringArg(args.content);
+        mkdirSync(dirname(targetPath), { recursive: true });
+        writeFileSync(targetPath, after, "utf8");
+        return {
+          content: `Wrote ${targetPath}\n\n${createUnifiedDiff(targetPath, before, after)}`,
+          details: {
+            path: targetPath,
+            operation: "write",
+            existedBefore,
+            before,
+            after
           }
         };
       }
@@ -94,6 +147,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "search_text",
       description: "Search file contents using ripgrep from the project root.",
+      permissionCategory: "read",
       input: objectSchema({
         query: stringSchema("Plain text or regex pattern.")
       }, ["query"]),
@@ -116,6 +170,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "run_shell",
       description: "Run a shell command inside the project directory.",
+      permissionCategory: "shell",
       input: objectSchema({
         command: stringSchema("Shell command to execute."),
         timeoutMs: numberSchema("Optional timeout in milliseconds.")
@@ -137,6 +192,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "git_status",
       description: "Show concise git status for the project.",
+      permissionCategory: "git",
       input: objectSchema({}, []),
       async execute() {
         const { stdout } = await runProcess("git", ["status", "--short"], 30000, context.cwd);
@@ -146,6 +202,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     {
       name: "git_diff",
       description: "Show git diff for the current project.",
+      permissionCategory: "git",
       input: objectSchema({}, []),
       async execute() {
         const { stdout } = await runProcess("git", ["diff", "--stat"], 30000, context.cwd);
@@ -158,6 +215,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     tools.push({
       name: "web_search",
       description: "Search the public web and return cited results.",
+      permissionCategory: "network",
       input: objectSchema({
         query: stringSchema("Search query."),
         maxResults: numberSchema("Optional maximum number of results.")
@@ -184,6 +242,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
   tools.push({
     name: "weather",
     description: "Fetch current weather and today's forecast for a location.",
+    permissionCategory: "network",
     input: objectSchema({
       location: stringSchema("City, region, or place name.")
     }, ["location"]),
@@ -200,6 +259,7 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
     tools.push({
       name: "news_search",
       description: "Search recent news articles and return cited results.",
+      permissionCategory: "network",
       input: objectSchema({
         query: stringSchema("News search query."),
         maxResults: numberSchema("Optional maximum number of articles.")
@@ -240,6 +300,7 @@ export const internalForTesting = {
   normalizeWindowsCommand,
   assertSafeShellCommand,
   resolveSafePath,
+  createUnifiedDiff,
   describeAvailableTools
 };
 
@@ -344,4 +405,34 @@ function assertSafeShellCommand(command: string): void {
       throw new Error("Blocked potentially destructive shell command.");
     }
   }
+}
+
+function createUnifiedDiff(path: string, before: string, after: string): string {
+  if (before === after) {
+    return `(no changes for ${path})`;
+  }
+
+  const beforeLines = before.replace(/\r\n/g, "\n").split("\n");
+  const afterLines = after.replace(/\r\n/g, "\n").split("\n");
+  const lines = [`--- ${path}`, `+++ ${path}`];
+  const maxLength = Math.max(beforeLines.length, afterLines.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const beforeLine = beforeLines[index];
+    const afterLine = afterLines[index];
+    if (beforeLine === afterLine) {
+      if (beforeLine !== undefined) {
+        lines.push(` ${beforeLine}`);
+      }
+      continue;
+    }
+    if (beforeLine !== undefined) {
+      lines.push(`-${beforeLine}`);
+    }
+    if (afterLine !== undefined) {
+      lines.push(`+${afterLine}`);
+    }
+  }
+
+  return lines.join("\n");
 }

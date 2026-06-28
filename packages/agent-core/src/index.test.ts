@@ -136,6 +136,56 @@ test("runTurn can continue after unknown tool requests when configured", async (
   assert.match(result.messages.at(-2)?.content ?? "", /unavailable in this session/);
 });
 
+test("runTurn records authorization denial as a tool result", async () => {
+  let calls = 0;
+  const provider: LlmProvider = {
+    name: "stub",
+    async generate() {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          message: { role: "assistant", content: "" },
+          toolCalls: [
+            {
+              id: "call_1",
+              name: "write_file",
+              arguments: { path: "a.txt", content: "x" }
+            }
+          ]
+        };
+      }
+
+      return {
+        message: { role: "assistant", content: "I could not write the file." }
+      };
+    }
+  };
+
+  const result = await runTurn({
+    provider,
+    model: "stub-model",
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "write a file" }],
+    tools: [
+      {
+        name: "write_file",
+        description: "Write file",
+        input: {},
+        permissionCategory: "write",
+        mutatesFileSystem: true,
+        async execute() {
+          return { content: "wrote" };
+        }
+      }
+    ],
+    authorizeToolCall: async () => ({ content: "Permission denied.", isError: true }),
+    maxIterations: 2
+  });
+
+  assert.match(result.messages.at(-2)?.content ?? "", /Permission denied/);
+  assert.equal(result.messages.at(-1)?.content, "I could not write the file.");
+});
+
 test("runTurn makes a final no-tool attempt after iteration exhaustion", async () => {
   let calls = 0;
   const provider: LlmProvider = {

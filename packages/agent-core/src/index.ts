@@ -15,10 +15,15 @@ export type ToolResult = {
   isError?: boolean;
 };
 
+export type ToolPermissionCategory = "read" | "write" | "shell" | "network" | "git";
+
 export type AgentTool = {
   name: string;
   description: string;
   input: Record<string, unknown>;
+  permissionCategory?: ToolPermissionCategory;
+  mutatesFileSystem?: boolean;
+  preview?: (args: Record<string, unknown>) => Promise<ToolResult>;
   execute: (args: Record<string, unknown>) => Promise<ToolResult>;
 };
 
@@ -36,6 +41,7 @@ export type RunTurnOptions = {
   tools: AgentTool[];
   maxIterations?: number;
   onEvent?: (event: AgentEvent) => void;
+  authorizeToolCall?: (tool: AgentTool, args: Record<string, unknown>) => Promise<ToolResult | undefined>;
   continueOnUnknownTool?: boolean;
   finalAttemptOnExhaustion?: boolean;
 };
@@ -107,6 +113,18 @@ export async function runTurn(options: RunTurnOptions): Promise<TurnResult> {
       }
 
       options.onEvent?.({ type: "tool-call", toolName: tool.name, args: call.arguments });
+      const authorizationResult = await options.authorizeToolCall?.(tool, call.arguments);
+      if (authorizationResult) {
+        options.onEvent?.({ type: "tool-result", toolName: tool.name, result: authorizationResult });
+        messages.push({
+          role: "tool",
+          name: tool.name,
+          toolCallId: call.id,
+          content: authorizationResult.content
+        });
+        continue;
+      }
+
       const result = await executeToolCall(tool, call.arguments, options.onEvent);
       options.onEvent?.({ type: "tool-result", toolName: tool.name, result });
       messages.push({
