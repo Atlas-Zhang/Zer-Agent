@@ -8,6 +8,8 @@ export type AppConfig = {
   sessionDir: string;
   logDir: string;
   maxIterations: number;
+  compactMaxMessages: number;
+  compactMaxChars: number;
   permissionDefault: PermissionDecision;
   systemPrompt: string;
   deepSeekBaseUrl: string;
@@ -56,6 +58,8 @@ export function loadAppConfig(cwd: string): AppConfig {
     sessionDir: resolve(cwd, process.env.ZER_AGENT_SESSION_DIR ?? fileConfig.sessionDir ?? ".zer-agent/sessions"),
     logDir: resolve(cwd, process.env.ZER_AGENT_LOG_DIR ?? fileConfig.logDir ?? ".zer-agent/logs"),
     maxIterations: readPositiveInteger(process.env.ZER_AGENT_MAX_ITERATIONS) ?? fileConfig.maxIterations ?? 8,
+    compactMaxMessages: readPositiveInteger(process.env.ZER_AGENT_COMPACT_MAX_MESSAGES) ?? fileConfig.compactMaxMessages ?? 80,
+    compactMaxChars: readPositiveInteger(process.env.ZER_AGENT_COMPACT_MAX_CHARS) ?? fileConfig.compactMaxChars ?? 120000,
     permissionDefault: readPermissionDecision(process.env.ZER_AGENT_PERMISSION_DEFAULT ?? fileConfig.permissionDefault),
     systemPrompt: process.env.ZER_AGENT_SYSTEM_PROMPT ?? fileConfig.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     deepSeekBaseUrl: process.env.DEEPSEEK_BASE_URL ?? fileConfig.deepSeekBaseUrl ?? "https://api.deepseek.com",

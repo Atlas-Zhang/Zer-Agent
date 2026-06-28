@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import process from "node:process";
 import { runTurn, type AgentTool, type ToolResult } from "@zer-agent/agent-core";
 import type { LlmProvider } from "@zer-agent/llm-core";
 import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, type PermissionDecision, type ProviderId } from "./config.js";
+import { compactSessionIfNeeded, formatSessionSummaries } from "./compaction.js";
 import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
@@ -29,7 +31,6 @@ async function main() {
   let providerId = normalizeProviderId(session.provider, config.provider);
   let provider = createProvider(config, providerId, model);
   const tools = createBuiltInTools({ cwd, config });
-  const toolInventoryPrompt = describeAvailableTools(tools);
   const startupMode = session.messages.length > 0 ? "resumed" : "new";
   logger.info("app.start", {
     cwd,
@@ -81,6 +82,9 @@ async function main() {
       }
 
       session.messages.push({ role: "user", content: input });
+      if (!session.title) {
+        session.title = input.slice(0, 60);
+      }
       session.messages = repairConversationHistory(session.messages);
       logger.info("turn.start", {
         sessionId: session.id,
@@ -90,13 +94,30 @@ async function main() {
       });
       ui.beginTurn();
       try {
-        const systemPrompt = [config.systemPrompt, config.shellContext, toolInventoryPrompt, loadAgentsInstructions(cwd)].filter(Boolean).join("\n\n");
+        const compacted = await compactSessionIfNeeded(session, provider, model, config);
+        if (compacted.compacted) {
+          store.save(session);
+          logger.info("session.compacted", {
+            sessionId: session.id,
+            reason: compacted.reason
+          });
+        }
+        const activeTools = filterToolsForMode(tools, session.mode);
+        const toolInventoryPrompt = describeAvailableTools(activeTools);
+        const systemPrompt = [
+          config.systemPrompt,
+          session.mode === "plan" ? "Current mode: plan. Do not mutate files or run shell commands. Produce analysis and implementation plans only." : "Current mode: build. You may use available tools subject to permissions.",
+          config.shellContext,
+          formatSessionSummaries(session),
+          toolInventoryPrompt,
+          loadAgentsInstructions(cwd)
+        ].filter(Boolean).join("\n\n");
         const result = await runTurn({
           provider,
           model,
           systemPrompt,
           messages: session.messages,
-          tools,
+          tools: activeTools,
           maxIterations: config.maxIterations,
           continueOnUnknownTool: true,
           authorizeToolCall(tool, args) {
@@ -168,7 +189,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   const [command, ...rest] = input.split(/\s+/);
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /permissions /undo /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
@@ -228,6 +249,78 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
     case "/permissions":
       context.ui.info(formatPermissionSummary(loadAppConfig(context.cwd).permissionDefault));
       return true;
+    case "/mode": {
+      const nextMode = rest[0];
+      if (!nextMode) {
+        context.ui.info(`Current mode: ${context.session.mode}`);
+        return true;
+      }
+      if (nextMode !== "plan" && nextMode !== "build") {
+        context.ui.info("Usage: /mode plan|build");
+        return true;
+      }
+      context.session.mode = nextMode;
+      context.store.save(context.session);
+      context.ui.info(`Mode set to ${nextMode}`);
+      return true;
+    }
+    case "/compact": {
+      const config = loadAppConfig(context.cwd);
+      const result = await compactSessionIfNeeded(context.session, context.provider, context.model, config, true);
+      if (result.compacted) {
+        context.store.save(context.session);
+      }
+      context.ui.info(`Compaction: ${result.reason}`);
+      return true;
+    }
+    case "/sessions":
+      context.ui.info(formatSessionList(context.store.list()));
+      return true;
+    case "/fork": {
+      const source = rest[0] ? context.store.load(rest[0]) : context.session;
+      const forked = context.store.fork(source);
+      context.setSession(forked);
+      context.setModel(forked.model);
+      context.setProvider(normalizeProviderId(forked.provider, context.providerId));
+      context.ui.setHistory(context.store.getUserHistory(forked));
+      context.ui.info(`Forked session ${source.id} -> ${forked.id}`);
+      return true;
+    }
+    case "/delete": {
+      const sessionId = rest[0];
+      if (!sessionId) {
+        context.ui.info("Usage: /delete <session-id>");
+        return true;
+      }
+      if (sessionId === context.session.id) {
+        context.ui.info("Refusing to delete the active session. Resume or create another session first.");
+        return true;
+      }
+      context.ui.info(context.store.delete(sessionId) ? `Deleted session ${sessionId}` : `Session not found: ${sessionId}`);
+      return true;
+    }
+    case "/export": {
+      const [sessionId, outputPath] = rest;
+      if (!sessionId || !outputPath) {
+        context.ui.info("Usage: /export <session-id> <path>");
+        return true;
+      }
+      const loaded = context.store.load(sessionId);
+      const targetPath = resolve(context.cwd, outputPath);
+      writeFileSync(targetPath, JSON.stringify(loaded, null, 2), "utf8");
+      context.ui.info(`Exported session ${sessionId} to ${targetPath}`);
+      return true;
+    }
+    case "/import": {
+      const inputPath = rest[0];
+      if (!inputPath) {
+        context.ui.info("Usage: /import <path>");
+        return true;
+      }
+      const imported = context.store.import(JSON.parse(readFileSync(resolve(context.cwd, inputPath), "utf8")) as StoredSession);
+      context.ui.info(`Imported session as ${imported.id}`);
+      return true;
+    }
     case "/undo":
       context.ui.info(undoLastSnapshot(context.session, context.store));
       return true;
@@ -238,7 +331,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.ui.info(describeAvailableTools(createBuiltInTools({
         cwd: context.cwd,
         config: loadAppConfig(context.cwd)
-      })));
+      }).filter((tool) => context.session.mode === "build" || (!tool.mutatesFileSystem && tool.permissionCategory !== "shell"))));
       return true;
     case "/verbose": {
       const enabled = context.ui.toggleVerbose();
@@ -268,6 +361,33 @@ function formatSessionSummary(session: StoredSession, model: string, providerId:
     `tokens=${tokenSummary}`,
     `updated=${session.updatedAt}`
   ].join(" | ");
+}
+
+function formatSessionList(sessions: StoredSession[]): string {
+  if (sessions.length === 0) {
+    return "No sessions found.";
+  }
+
+  return sessions
+    .slice(0, 20)
+    .map((session) => [
+      session.id,
+      session.updatedAt,
+      session.provider,
+      session.model,
+      session.mode,
+      `${session.metrics.turnCount} turns`,
+      session.title ?? "(untitled)"
+    ].join(" | "))
+    .join("\n");
+}
+
+function filterToolsForMode(tools: AgentTool[], mode: StoredSession["mode"]): AgentTool[] {
+  if (mode === "build") {
+    return tools;
+  }
+
+  return tools.filter((tool) => !tool.mutatesFileSystem && tool.permissionCategory !== "shell");
 }
 
 function normalizeProviderId(value: string, fallback: ProviderId): ProviderId {

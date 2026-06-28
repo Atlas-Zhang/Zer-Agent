@@ -141,6 +141,17 @@ export class SessionStore {
     return forked;
   }
 
+  import(session: Partial<StoredSession>): StoredSession {
+    const imported = this.normalizeSession({
+      ...session,
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    this.save(imported);
+    return imported;
+  }
+
   getUserHistory(session: StoredSession, limit = 100): string[] {
     const history = session.messages
       .filter((message) => message.role === "user")
