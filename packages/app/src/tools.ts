@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { AgentTool } from "@zer-agent/agent-core";
+import ts from "typescript";
 import type { AppConfig } from "./config.js";
 import { lookupWeather, searchGNews, searchTavily } from "./external-services.js";
 
@@ -168,6 +169,45 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
       }
     },
     {
+      name: "list_symbols",
+      description: "List top-level TypeScript symbols in a source file.",
+      permissionCategory: "read",
+      input: objectSchema({
+        path: stringSchema("Relative TypeScript file path.")
+      }, ["path"]),
+      async execute(args) {
+        const targetPath = resolve(context.cwd, toStringArg(args.path));
+        const symbols = listTypeScriptSymbols(targetPath);
+        return { content: symbols.length ? symbols.join("\n") : "(no symbols)" };
+      }
+    },
+    {
+      name: "find_symbol",
+      description: "Find TypeScript symbol declarations by name across the project.",
+      permissionCategory: "read",
+      input: objectSchema({
+        name: stringSchema("Symbol name to find.")
+      }, ["name"]),
+      async execute(args) {
+        const name = toStringArg(args.name);
+        const matches = findTypeScriptSymbols(context.cwd, name);
+        return { content: matches.length ? matches.join("\n") : `(no symbol declarations found for ${name})` };
+      }
+    },
+    {
+      name: "find_references",
+      description: "Find textual references to a TypeScript symbol across project source files.",
+      permissionCategory: "read",
+      input: objectSchema({
+        name: stringSchema("Symbol name to find references for.")
+      }, ["name"]),
+      async execute(args) {
+        const name = toStringArg(args.name);
+        const matches = findTypeScriptReferences(context.cwd, name);
+        return { content: matches.length ? matches.join("\n") : `(no references found for ${name})` };
+      }
+    },
+    {
       name: "run_shell",
       description: "Run a shell command inside the project directory.",
       permissionCategory: "shell",
@@ -293,6 +333,7 @@ export function describeAvailableTools(tools: AgentTool[]): string {
   }
 
   lines.push("If a tool is listed here, use it when appropriate instead of claiming it is unavailable.");
+  lines.push("For TypeScript code navigation, prefer list_symbols, find_symbol, and find_references before broad text search.");
   return lines.join("\n");
 }
 
@@ -301,6 +342,9 @@ export const internalForTesting = {
   assertSafeShellCommand,
   resolveSafePath,
   createUnifiedDiff,
+  listTypeScriptSymbols,
+  findTypeScriptSymbols,
+  findTypeScriptReferences,
   describeAvailableTools
 };
 
@@ -405,6 +449,105 @@ function assertSafeShellCommand(command: string): void {
       throw new Error("Blocked potentially destructive shell command.");
     }
   }
+}
+
+function listTypeScriptSymbols(filePath: string): string[] {
+  const source = ts.createSourceFile(filePath, readFileSync(filePath, "utf8"), ts.ScriptTarget.Latest, true);
+  const symbols: string[] = [];
+
+  for (const statement of source.statements) {
+    const symbol = describeSymbol(statement, source);
+    if (symbol) {
+      symbols.push(symbol);
+    }
+  }
+
+  return symbols;
+}
+
+function findTypeScriptSymbols(cwd: string, name: string): string[] {
+  const matches: string[] = [];
+  for (const filePath of listTypeScriptFiles(cwd)) {
+    for (const symbol of listTypeScriptSymbols(filePath)) {
+      if (symbol.includes(` ${name} `) || symbol.endsWith(` ${name}`) || symbol.includes(` ${name}(`)) {
+        matches.push(`${filePath}: ${symbol}`);
+      }
+    }
+  }
+
+  return matches;
+}
+
+function findTypeScriptReferences(cwd: string, name: string): string[] {
+  const matches: string[] = [];
+  const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`);
+  for (const filePath of listTypeScriptFiles(cwd)) {
+    const lines = readFileSync(filePath, "utf8").replace(/\r\n/g, "\n").split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      if (pattern.test(line)) {
+        matches.push(`${filePath}:${index + 1}: ${line.trim()}`);
+      }
+    }
+  }
+
+  return matches;
+}
+
+function listTypeScriptFiles(cwd: string): string[] {
+  const output: string[] = [];
+  visitDirectory(cwd, output);
+  return output;
+}
+
+function visitDirectory(directory: string, output: string[]): void {
+  for (const entry of readdirSync(directory)) {
+    if (entry === "node_modules" || entry === "dist" || entry === ".git") {
+      continue;
+    }
+
+    const fullPath = resolve(directory, entry);
+    const stats = statSync(fullPath);
+    if (stats.isDirectory()) {
+      visitDirectory(fullPath, output);
+      continue;
+    }
+
+    if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
+      output.push(fullPath);
+    }
+  }
+}
+
+function describeSymbol(node: ts.Statement, source: ts.SourceFile): string | undefined {
+  const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    return `function ${node.name.text} line ${line}`;
+  }
+  if (ts.isClassDeclaration(node) && node.name) {
+    return `class ${node.name.text} line ${line}`;
+  }
+  if (ts.isInterfaceDeclaration(node)) {
+    return `interface ${node.name.text} line ${line}`;
+  }
+  if (ts.isTypeAliasDeclaration(node)) {
+    return `type ${node.name.text} line ${line}`;
+  }
+  if (ts.isEnumDeclaration(node)) {
+    return `enum ${node.name.text} line ${line}`;
+  }
+  if (ts.isVariableStatement(node)) {
+    return node.declarationList.declarations
+      .map((declaration) => ts.isIdentifier(declaration.name) ? `const ${declaration.name.text} line ${line}` : undefined)
+      .filter((value): value is string => Boolean(value))
+      .join("\n") || undefined;
+  }
+
+  return undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function createUnifiedDiff(path: string, before: string, after: string): string {

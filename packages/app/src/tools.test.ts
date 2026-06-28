@@ -110,3 +110,27 @@ test("edit_file preview returns diff without mutating", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("TypeScript symbol tools list declarations and references", async () => {
+  const root = mkdtempSync(join(tmpdir(), "zer-agent-symbols-"));
+  try {
+    writeFileSync(join(root, "sample.ts"), [
+      "export type UserId = string;",
+      "export function loadUser(id: UserId) {",
+      "  return id;",
+      "}",
+      "export class UserStore {}"
+    ].join("\n"), "utf8");
+
+    const symbols = internalForTesting.listTypeScriptSymbols(join(root, "sample.ts"));
+    const declarations = internalForTesting.findTypeScriptSymbols(root, "loadUser");
+    const references = internalForTesting.findTypeScriptReferences(root, "UserId");
+
+    assert(symbols.some((symbol) => symbol.includes("type UserId")));
+    assert(symbols.some((symbol) => symbol.includes("function loadUser")));
+    assert(declarations.some((symbol) => symbol.includes("function loadUser")));
+    assert(references.length >= 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
