@@ -34,6 +34,7 @@ test("createLoggedProvider logs request and response records", async () => {
       tools: [{ name: "read_file", description: "Read", input: {} }]
     });
 
+    await logger.flush();
     const lines = readFileSync(logger.getCurrentLogPath(), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.equal(lines[0]?.event, "llm.request");
     assert.equal(lines[0]?.lastUserInput, "hello");

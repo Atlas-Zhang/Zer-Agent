@@ -128,6 +128,8 @@ Use `/logs` to print the active log file path. Logs are JSONL records under `.ze
 
 Zer-Agent records app startup, every user input, slash commands, session changes, mode/model/provider changes, shell shortcuts, tool events, LLM provider requests and responses, failures, and per-turn token usage. Successful turns also write cumulative session token metrics.
 
+Log writes are queued and flushed asynchronously so audit logging does not block the main agent loop. Zer-Agent flushes pending log records during normal shutdown.
+
 ## Modes
 
 - `build`: normal mode. The agent can use all available tools, subject to permission policy.

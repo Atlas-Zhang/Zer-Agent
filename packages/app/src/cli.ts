@@ -283,6 +283,7 @@ async function main() {
     }
   } finally {
     ui.close();
+    await logger.flush();
   }
 }
 
@@ -414,7 +415,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       return true;
     }
     case "/logs":
-      context.ui.info(`Log file: ${new AppLogger(loadAppConfig(context.cwd).logDir).getCurrentLogPath()}`);
+      context.ui.info(`Log file: ${context.logger.getCurrentLogPath()}`);
       return true;
     case "/model": {
       const nextModel = rest[0];
