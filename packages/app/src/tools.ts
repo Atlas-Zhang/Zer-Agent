@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { AgentTool } from "@zer-agent/agent-core";
+import type { AgentTool, ToolResult } from "@zer-agent/agent-core";
 import ts from "typescript";
 import type { AppConfig } from "./config.js";
 import { lookupWeather, searchGNews, searchTavily } from "./external-services.js";
@@ -10,7 +10,7 @@ import { lookupWeather, searchGNews, searchTavily } from "./external-services.js
 const execFileAsync = promisify(execFile);
 const PROTECTED_PATH_SEGMENTS = [".env", ".git", "node_modules"];
 
-type ToolContext = {
+export type ToolContext = {
   cwd: string;
   config: AppConfig;
   fetchImpl?: typeof fetch;
@@ -218,16 +218,8 @@ export function createBuiltInTools(context: ToolContext): AgentTool[] {
       }, ["command"]),
       async execute(args) {
         const command = toStringArg(args.command);
-        assertSafeShellCommand(command);
         const timeoutMs = typeof args.timeoutMs === "number" ? args.timeoutMs : 30000;
-        const normalizedCommand = process.platform === "win32" ? normalizeWindowsCommand(command) : command;
-        const shell = process.platform === "win32" ? "powershell.exe" : "sh";
-        const shellArgs = process.platform === "win32"
-          ? ["-NoProfile", "-Command", normalizedCommand]
-          : ["-lc", normalizedCommand];
-
-        const { stdout, stderr } = await runProcess(shell, shellArgs, timeoutMs, context.cwd, context.getAbortSignal?.());
-        return { content: [stdout, stderr].filter(Boolean).join("\n").trim() || "(no output)" };
+        return executeShellCommand(context.cwd, command, timeoutMs, context.getAbortSignal?.());
       }
     },
     {
@@ -341,6 +333,7 @@ export function describeAvailableTools(tools: AgentTool[]): string {
 export const internalForTesting = {
   normalizeWindowsCommand,
   assertSafeShellCommand,
+  executeShellCommand,
   resolveSafePath,
   createUnifiedDiff,
   listTypeScriptSymbols,
@@ -348,6 +341,30 @@ export const internalForTesting = {
   findTypeScriptReferences,
   describeAvailableTools
 };
+
+export async function executeShellCommand(
+  cwd: string,
+  command: string,
+  timeoutMs = 30000,
+  signal?: AbortSignal
+): Promise<ToolResult> {
+  assertSafeShellCommand(command);
+  const normalizedCommand = process.platform === "win32" ? normalizeWindowsCommand(command) : command;
+  const shell = process.platform === "win32" ? "powershell.exe" : "sh";
+  const shellArgs = process.platform === "win32"
+    ? ["-NoProfile", "-Command", normalizedCommand]
+    : ["-lc", normalizedCommand];
+
+  const { stdout, stderr } = await runProcess(shell, shellArgs, timeoutMs, cwd, signal);
+  return {
+    content: [stdout, stderr].filter(Boolean).join("\n").trim() || "(no output)",
+    details: {
+      command,
+      normalizedCommand,
+      cwd
+    }
+  };
+}
 
 async function runProcess(command: string, args: string[], timeout = 30000, cwd?: string, signal?: AbortSignal) {
   return execFileAsync(command, args, {

@@ -14,6 +14,7 @@ Zer-Agent is a terminal-first coding agent for local repository work. It combine
 - Plan/build modes. Plan mode keeps the agent read-only for implementation planning.
 - Context compaction for long sessions.
 - Esc interruption during a running turn. Partial context is saved so you can continue later.
+- Direct shell shortcut with `!<command>` inside the chat session.
 - Project instructions loaded from `AGENTS.md`.
 - Runtime logs under `.zer-agent/logs`.
 
@@ -81,6 +82,13 @@ Type a normal request:
 Refactor the config loader and run the tests.
 ```
 
+Run a terminal command directly from the chat session by prefixing it with `!`:
+
+```text
+!git status --short
+!npm test
+```
+
 Type `/` to see live command suggestions. Common commands:
 
 ```text
@@ -111,6 +119,8 @@ continue from where you stopped
 ```
 
 Use `/clear` to clear the current session context without deleting the session file.
+
+Direct `!` commands run from the current project folder. Zer-Agent applies the same destructive-command guard used by the `run_shell` tool and stores the command output in the current session context.
 
 ## Modes
 

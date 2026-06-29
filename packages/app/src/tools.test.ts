@@ -23,6 +23,19 @@ test("resolveSafePath blocks writes to protected paths", () => {
   );
 });
 
+test("executeShellCommand runs a direct shell command", async () => {
+  const result = await internalForTesting.executeShellCommand(process.cwd(), "node -e \"console.log('shortcut-ok')\"");
+
+  assert.match(result.content, /shortcut-ok/);
+});
+
+test("executeShellCommand blocks destructive direct commands", async () => {
+  await assert.rejects(
+    () => internalForTesting.executeShellCommand(process.cwd(), "git reset --hard"),
+    /Blocked potentially destructive shell command/
+  );
+});
+
 test("createBuiltInTools only registers external search tools when configured", () => {
   const baseConfig: AppConfig = {
     provider: "deepseek",

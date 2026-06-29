@@ -13,7 +13,7 @@ import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { createProvider, listProviderIds } from "./provider-registry.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
-import { createBuiltInTools, describeAvailableTools } from "./tools.js";
+import { createBuiltInTools, describeAvailableTools, executeShellCommand } from "./tools.js";
 
 async function main() {
   const cwd = process.cwd();
@@ -61,6 +61,19 @@ async function main() {
 
       if (input === "/exit" || input === "/quit") {
         break;
+      }
+
+      if (input.startsWith("!")) {
+        await handleShellShortcut(input, {
+          cwd,
+          model,
+          providerId,
+          session,
+          store,
+          ui,
+          logger
+        });
+        continue;
       }
 
       const commandHandled = await handleCommand(input, {
@@ -225,6 +238,53 @@ type CommandContext = {
   setSession: (session: StoredSession) => void;
   ui: TerminalUi;
 };
+
+type ShellShortcutContext = {
+  cwd: string;
+  model: string;
+  providerId: ProviderId;
+  session: StoredSession;
+  store: SessionStore;
+  ui: TerminalUi;
+  logger: AppLogger;
+};
+
+async function handleShellShortcut(input: string, context: ShellShortcutContext): Promise<void> {
+  const command = input.slice(1).trim();
+  if (!command) {
+    context.ui.warn("Usage: !<shell command>");
+    return;
+  }
+
+  context.logger.info("shell.shortcut.start", {
+    sessionId: context.session.id,
+    command
+  });
+
+  try {
+    const result = await executeShellCommand(context.cwd, command);
+    const content = formatShellShortcutResult(command, result.content);
+    context.session.messages.push({ role: "user", content: input });
+    context.session.messages.push({ role: "assistant", content });
+    context.session.model = context.model;
+    context.store.recordTurn(context.session);
+    context.ui.setHistory(context.store.getUserHistory(context.session));
+    syncPromptStatus(context.ui, context.session, context.providerId, context.model, context.cwd);
+    context.ui.renderAssistantMessage(content);
+    context.logger.info("shell.shortcut.success", {
+      sessionId: context.session.id,
+      command
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.ui.warn(`Shell command failed: ${message}`);
+    context.logger.error("shell.shortcut.failure", {
+      sessionId: context.session.id,
+      command,
+      error: message
+    });
+  }
+}
 
 async function handleCommand(input: string, context: CommandContext): Promise<boolean> {
   if (!input.startsWith("/")) {
@@ -563,6 +623,25 @@ function formatPermissionSummary(defaultDecision: PermissionDecision): string {
     "Risky categories: write, shell, network",
     "Set ZER_AGENT_PERMISSION_DEFAULT=allow|ask|deny to change default behavior."
   ].join("\n");
+}
+
+function formatShellShortcutResult(command: string, output: string): string {
+  return [
+    `Shell command completed: \`${command}\``,
+    "",
+    "```text",
+    truncateShellOutput(output),
+    "```"
+  ].join("\n");
+}
+
+function truncateShellOutput(output: string): string {
+  const maxLength = 6000;
+  if (output.length <= maxLength) {
+    return output;
+  }
+
+  return `${output.slice(0, maxLength).trimEnd()}\n\n[truncated]`;
 }
 
 function clearSessionContext(session: StoredSession): void {
