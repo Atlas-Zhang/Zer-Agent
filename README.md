@@ -12,6 +12,7 @@ Zer-Agent is a terminal-first coding agent for local repository work. It combine
 - Persistent sessions with auto-resume by working directory.
 - Session commands for list, resume, fork, export, import, delete, compact, clear, and status.
 - Custom project commands from `.zer-agent/commands` and switchable agent profiles from `.zer-agent/agents`.
+- MCP stdio server integration for external tools.
 - Model catalog display with `/models`.
 - Plan/build modes. Plan mode keeps the agent read-only for implementation planning.
 - Context compaction for long sessions.
@@ -107,6 +108,7 @@ Type `/` to see live command suggestions. Common commands:
 /run <custom-command> [input]
 /diff
 /review
+/mcp
 /mode plan
 /mode build
 /tools
@@ -138,6 +140,19 @@ Add project agent profiles as Markdown files under `.zer-agent/agents`. Use `/ag
 Use `/models` to list configured model choices. Additional models can be added in `.zer-agent/config.json` with a `models` array containing `{ "id": "...", "provider": "deepseek" }` or `{ "id": "...", "provider": "openai-compatible" }`.
 
 Use `/diff` to print the current working tree diff, and `/review` to ask the active model to review that diff.
+
+Configure MCP stdio servers in `.zer-agent/config.json` with an `mcpServers` object. Use `/mcp` to see connection status. MCP tools are exposed to the agent with names like `mcp_<server>_<tool>`.
+
+```json
+{
+  "mcpServers": {
+    "example": {
+      "command": "node",
+      "args": ["path/to/server.js"]
+    }
+  }
+}
+```
 
 ## Logs
 

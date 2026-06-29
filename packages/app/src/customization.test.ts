@@ -45,6 +45,7 @@ test("formatModelCatalog marks the active model", () => {
     provider: "deepseek",
     model: "deepseek-chat",
     models: [{ id: "deepseek-chat", provider: "deepseek", label: "Chat" }],
+    mcpServers: {},
     sessionDir: ".zer-agent/sessions",
     logDir: ".zer-agent/logs",
     maxIterations: 8,

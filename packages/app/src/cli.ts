@@ -19,6 +19,7 @@ import {
 } from "./customization.js";
 import { createLoggedProvider } from "./llm-logging.js";
 import { AppLogger } from "./logger.js";
+import { createMcpRuntime, formatMcpStatus, type McpRuntime } from "./mcp-tools.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { createProvider, listProviderIds } from "./provider-registry.js";
 import { SessionStore, type StoredSession } from "./session-store.js";
@@ -35,6 +36,7 @@ async function main() {
   const logger = new AppLogger(config.logDir);
   const customCommands = loadCustomCommands(cwd);
   const agentProfiles = loadAgentProfiles(cwd);
+  const mcpRuntime = await createMcpRuntime(config, cwd);
 
   let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd, config.provider, "build", config.permissionDefault);
   session = repairAndPersistSessionIfNeeded(session, store, logger);
@@ -47,11 +49,14 @@ async function main() {
   }));
   let provider = buildProvider();
   let activeAbortController: AbortController | undefined;
-  const tools = createBuiltInTools({
+  const tools = [
+    ...createBuiltInTools({
     cwd,
     config,
     getAbortSignal: () => activeAbortController?.signal
-  });
+    }),
+    ...mcpRuntime.tools
+  ];
   const startupMode = session.messages.length > 0 ? "resumed" : "new";
   logger.info("app.start", {
     cwd,
@@ -130,6 +135,7 @@ async function main() {
         providerId,
         agentProfiles,
         customCommands,
+        mcpRuntime,
         session,
         store,
         setModel(nextModel) {
@@ -314,6 +320,7 @@ async function main() {
     }
   } finally {
     ui.close();
+    await mcpRuntime.close();
     await logger.flush();
   }
 }
@@ -326,6 +333,7 @@ type CommandContext = {
   providerId: ProviderId;
   agentProfiles: AgentProfile[];
   customCommands: CustomCommand[];
+  mcpRuntime: McpRuntime;
   session: StoredSession;
   store: SessionStore;
   setModel: (model: string) => void;
@@ -406,7 +414,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   });
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /models /provider <id> /agent [name] /run <command> [input] /diff /review /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions [ask|allow|deny] /undo /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /models /provider <id> /agent [name] /run <command> [input] /diff /review /mcp /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions [ask|allow|deny] /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
@@ -545,6 +553,9 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       return true;
     case "/diff":
       context.ui.info(await readGitDiff(context.cwd));
+      return true;
+    case "/mcp":
+      context.ui.info(formatMcpStatus(context.mcpRuntime.statuses));
       return true;
     case "/mode": {
       const nextMode = rest[0];

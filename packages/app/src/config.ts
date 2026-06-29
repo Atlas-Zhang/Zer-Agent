@@ -6,6 +6,7 @@ export type AppConfig = {
   provider: ProviderId;
   model: string;
   models: ModelConfig[];
+  mcpServers: Record<string, McpServerConfig>;
   sessionDir: string;
   logDir: string;
   maxIterations: number;
@@ -29,6 +30,11 @@ export type ModelConfig = {
   id: string;
   provider: ProviderId;
   label?: string;
+};
+export type McpServerConfig = {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
 };
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -65,6 +71,7 @@ export function loadAppConfig(cwd: string): AppConfig {
     provider,
     model,
     models: readModelConfigs(fileConfig.models, provider, model),
+    mcpServers: readMcpServers(fileConfig.mcpServers),
     sessionDir: resolve(cwd, process.env.ZER_AGENT_SESSION_DIR ?? fileConfig.sessionDir ?? ".zer-agent/sessions"),
     logDir: resolve(cwd, process.env.ZER_AGENT_LOG_DIR ?? fileConfig.logDir ?? ".zer-agent/logs"),
     maxIterations: readPositiveInteger(process.env.ZER_AGENT_MAX_ITERATIONS) ?? fileConfig.maxIterations ?? 8,
@@ -178,6 +185,45 @@ function readModelConfigs(value: unknown, provider: ProviderId, model: string): 
   }
 
   return [...deduped.values()];
+}
+
+function readMcpServers(value: unknown): Record<string, McpServerConfig> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const output: Record<string, McpServerConfig> = {};
+  for (const [name, rawServer] of Object.entries(value)) {
+    if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) {
+      continue;
+    }
+    const server = rawServer as Partial<McpServerConfig>;
+    if (typeof server.command !== "string" || !server.command.trim()) {
+      continue;
+    }
+    output[name] = {
+      command: server.command.trim(),
+      args: Array.isArray(server.args) ? server.args.filter((arg): arg is string => typeof arg === "string") : undefined,
+      env: readStringRecord(server.env)
+    };
+  }
+
+  return output;
+}
+
+function readStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const output: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "string") {
+      output[key] = raw;
+    }
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined;
 }
 
 function readPermissionDecision(value: string | undefined): PermissionDecision {

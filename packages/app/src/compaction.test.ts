@@ -26,6 +26,7 @@ test("compactSessionIfNeeded summarizes older messages and keeps recent messages
       provider: "deepseek",
       model: "model",
       models: [{ id: "model", provider: "deepseek" }],
+      mcpServers: {},
       sessionDir: root,
       logDir: root,
       maxIterations: 8,

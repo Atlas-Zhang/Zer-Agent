@@ -10,6 +10,7 @@ export const DEFAULT_COMMANDS = [
   "/run",
   "/diff",
   "/review",
+  "/mcp",
   "/mode",
   "/compact",
   "/clear",
