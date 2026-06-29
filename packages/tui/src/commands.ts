@@ -25,6 +25,7 @@ export const DEFAULT_COMMANDS = [
 const DEFAULT_COMMAND_ARGUMENTS: Record<string, string[]> = {
   "/mode": ["plan", "build"],
   "/provider": ["deepseek", "openai-compatible"],
+  "/permissions": ["ask", "allow", "deny"],
   "/verbose": [],
   "/quit": [],
   "/exit": []

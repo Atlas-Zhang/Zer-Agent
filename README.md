@@ -103,7 +103,7 @@ Type `/` to see live command suggestions. Common commands:
 /mode plan
 /mode build
 /tools
-/permissions
+/permissions [ask|allow|deny]
 /compact
 /clear
 /undo
@@ -144,7 +144,15 @@ Switch modes:
 
 ## Permission Policy
 
-Read and git status tools run automatically. Risky tools are controlled by `ZER_AGENT_PERMISSION_DEFAULT`:
+Read and git status tools run automatically. Risky tools use the session permission default. Change it during a chat session with:
+
+```text
+/permissions ask
+/permissions allow
+/permissions deny
+```
+
+Without an argument, `/permissions` prints the active session default and config default. The config default comes from `ZER_AGENT_PERMISSION_DEFAULT`:
 
 ```env
 ZER_AGENT_PERMISSION_DEFAULT=ask

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ChatMessage, ChatUsage } from "@zer-agent/llm-core";
+import type { PermissionDecision } from "./config.js";
 
 export type SessionMetrics = {
   turnCount: number;
@@ -40,13 +41,20 @@ export type StoredSession = {
   summaries: SessionSummary[];
   snapshots: SessionSnapshot[];
   permissionDecisions: Record<string, "allow" | "deny">;
+  permissionDefault?: PermissionDecision;
   metrics: SessionMetrics;
 };
 
 export class SessionStore {
   constructor(private readonly sessionDir: string) {}
 
-  create(model: string, cwd: string, provider = "deepseek", mode: SessionMode = "build"): StoredSession {
+  create(
+    model: string,
+    cwd: string,
+    provider = "deepseek",
+    mode: SessionMode = "build",
+    permissionDefault?: PermissionDecision
+  ): StoredSession {
     mkdirSync(this.sessionDir, { recursive: true });
     const timestamp = new Date().toISOString();
     const session: StoredSession = {
@@ -62,6 +70,7 @@ export class SessionStore {
       summaries: [],
       snapshots: [],
       permissionDecisions: {},
+      permissionDefault,
       metrics: {
         turnCount: 0,
         inputTokens: 0,
@@ -135,6 +144,7 @@ export class SessionStore {
       summaries: [...session.summaries],
       snapshots: [...session.snapshots],
       permissionDecisions: { ...session.permissionDecisions },
+      permissionDefault: session.permissionDefault,
       metrics: { ...session.metrics }
     };
     this.save(forked);
@@ -192,6 +202,7 @@ export class SessionStore {
       summaries: Array.isArray(session.summaries) ? session.summaries : [],
       snapshots: Array.isArray(session.snapshots) ? session.snapshots : [],
       permissionDecisions: session.permissionDecisions ?? {},
+      permissionDefault: normalizePermissionDefault(session.permissionDefault),
       metrics: {
         turnCount: session.metrics?.turnCount ?? derivedTurnCount,
         inputTokens: session.metrics?.inputTokens ?? 0,
@@ -200,4 +211,8 @@ export class SessionStore {
       }
     };
   }
+}
+
+function normalizePermissionDefault(value: unknown): PermissionDecision | undefined {
+  return value === "allow" || value === "ask" || value === "deny" ? value : undefined;
 }

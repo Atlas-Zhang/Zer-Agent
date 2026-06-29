@@ -20,9 +20,11 @@ test("completeInput ignores non-command input", () => {
 test("completeInput suggests command arguments", () => {
   const [modeHits] = internalForTesting.completeInput("/mode p", ["/mode"]);
   const [providerHits] = internalForTesting.completeInput("/provider open", ["/provider"]);
+  const [permissionHits] = internalForTesting.completeInput("/permissions a", ["/permissions"]);
 
   assert.deepEqual(modeHits, ["/mode plan"]);
   assert.deepEqual(providerHits, ["/provider openai-compatible"]);
+  assert.deepEqual(permissionHits, ["/permissions ask", "/permissions allow"]);
 });
 
 test("formatToolBadge wraps the tool name in brackets", () => {

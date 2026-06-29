@@ -26,7 +26,7 @@ async function main() {
   const store = new SessionStore(config.sessionDir);
   const logger = new AppLogger(config.logDir);
 
-  let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd, config.provider);
+  let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd, config.provider, "build", config.permissionDefault);
   session = repairAndPersistSessionIfNeeded(session, store, logger);
   let model = session.model;
   let providerId = normalizeProviderId(session.provider, config.provider);
@@ -199,7 +199,7 @@ async function main() {
           },
           continueOnUnknownTool: true,
           authorizeToolCall(tool, args) {
-            return authorizeToolCall(tool, args, session, config.permissionDefault, ui);
+            return authorizeAgentToolCall(tool, args, session, resolveSessionPermissionDefault(session, config.permissionDefault), ui);
           },
           onEvent(event) {
             logger.info("turn.event", {
@@ -372,12 +372,18 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   });
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions /undo /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions [ask|allow|deny] /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
         const previousSessionId = context.session.id;
-        const nextSession = context.store.create(context.model, context.cwd, context.providerId);
+        const nextSession = context.store.create(
+          context.model,
+          context.cwd,
+          context.providerId,
+          "build",
+          resolveSessionPermissionDefault(context.session, loadAppConfig(context.cwd).permissionDefault)
+        );
         context.setSession(nextSession);
         context.ui.setHistory(context.store.getUserHistory(nextSession));
         context.ui.info(`Started session ${nextSession.id}`);
@@ -446,7 +452,27 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       return true;
     }
     case "/permissions":
-      context.ui.info(formatPermissionSummary(loadAppConfig(context.cwd).permissionDefault));
+      {
+        const nextPermission = rest[0];
+        const configDefault = loadAppConfig(context.cwd).permissionDefault;
+        if (!nextPermission) {
+          context.ui.info(formatPermissionSummary(resolveSessionPermissionDefault(context.session, configDefault), configDefault));
+          return true;
+        }
+        if (!isPermissionDecision(nextPermission)) {
+          context.ui.info("Usage: /permissions ask|allow|deny");
+          return true;
+        }
+        const previousPermission = resolveSessionPermissionDefault(context.session, configDefault);
+        context.session.permissionDefault = nextPermission;
+        context.store.save(context.session);
+        context.ui.info(`Default risky-tool permission set to ${nextPermission}`);
+        context.logger.info("session.permission_changed", {
+          sessionId: context.session.id,
+          previousPermission,
+          permissionDefault: nextPermission
+        });
+      }
       return true;
     case "/mode": {
       const nextMode = rest[0];
@@ -625,6 +651,7 @@ function formatSessionSummary(session: StoredSession, model: string, providerId:
     `provider=${providerId}`,
     `model=${model}`,
     `mode=${session.mode}`,
+    `permissions=${session.permissionDefault ?? "config"}`,
     `title=${session.title ?? "(untitled)"}`,
     `cwd=${cwd}`,
     `turns=${session.metrics.turnCount}`,
@@ -688,7 +715,7 @@ function syncPromptStatus(
   });
 }
 
-async function authorizeToolCall(
+async function authorizeAgentToolCall(
   tool: AgentTool,
   args: Record<string, unknown>,
   session: StoredSession,
@@ -776,13 +803,23 @@ function undoLastSnapshot(session: StoredSession, store: SessionStore): string {
   return `Undid last file mutation: ${snapshot.path}`;
 }
 
-function formatPermissionSummary(defaultDecision: PermissionDecision): string {
+function formatPermissionSummary(defaultDecision: PermissionDecision, configDefault: PermissionDecision): string {
   return [
     `Default risky-tool permission: ${defaultDecision}`,
+    `Config default: ${configDefault}`,
     "Auto-allowed: read, git",
     "Risky categories: write, shell, network",
-    "Set ZER_AGENT_PERMISSION_DEFAULT=allow|ask|deny to change default behavior."
+    "Use /permissions ask|allow|deny to change this session.",
+    "Set ZER_AGENT_PERMISSION_DEFAULT=allow|ask|deny to change the config default."
   ].join("\n");
+}
+
+function resolveSessionPermissionDefault(session: StoredSession, configDefault: PermissionDecision): PermissionDecision {
+  return session.permissionDefault ?? configDefault;
+}
+
+function isPermissionDecision(value: string): value is PermissionDecision {
+  return value === "allow" || value === "ask" || value === "deny";
 }
 
 function formatShellShortcutResult(command: string, output: string): string {
