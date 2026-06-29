@@ -462,6 +462,7 @@ function syncPromptStatus(
     model,
     mode: session.mode,
     cwd,
+    title: session.title,
     turns: session.metrics.turnCount,
     tokens: session.metrics.totalTokens
   });

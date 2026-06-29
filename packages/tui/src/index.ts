@@ -1,8 +1,9 @@
-import readline from "node:readline/promises";
+import * as readline from "node:readline";
+import readlinePromises from "node:readline/promises";
 import type { AgentEvent } from "@zer-agent/agent-core";
 import { completeInput, DEFAULT_COMMANDS } from "./commands.js";
 import { renderMarkdownToTerminal } from "./markdown.js";
-import { bold, colorize, dim } from "./theme.js";
+import { bold, colorize, dim, stripAnsi } from "./theme.js";
 
 export type PromptStatus = {
   sessionId: string;
@@ -10,6 +11,7 @@ export type PromptStatus = {
   model: string;
   mode: string;
   cwd: string;
+  title?: string;
   turns: number;
   tokens: number;
 };
@@ -22,15 +24,20 @@ export class TerminalUi {
   private verbose = false;
   private lastNonTtyStatus = "";
   private promptStatus: PromptStatus | undefined;
+  private historyEntries: string[] = [];
   private interruptHandler: ((chunk: Buffer) => void) | undefined;
 
-  private readonly rl = readline.createInterface({
+  private readonly rl = readlinePromises.createInterface({
     input: process.stdin,
     output: process.stdout,
     completer: (line) => completeInput(line, DEFAULT_COMMANDS)
   });
 
   async prompt(label = "you> "): Promise<string> {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      return this.promptInteractive(label);
+    }
+
     this.renderPromptStatus();
     return this.rl.question(colorize("blue", label));
   }
@@ -42,6 +49,7 @@ export class TerminalUi {
   }
 
   setHistory(entries: string[]): void {
+    this.historyEntries = entries;
     const history = [...entries].reverse();
     const target = this.rl as readline.Interface & { history?: string[] };
     target.history = history;
@@ -259,9 +267,124 @@ export class TerminalUi {
 
     const status = this.promptStatus;
     const session = status.sessionId.slice(0, 8);
-    const cwd = compactPath(status.cwd, process.stdout.columns ?? 100);
-    process.stdout.write(dim(`${cwd} | ${status.provider}/${status.model} | ${status.mode} | session=${session} | turns=${status.turns} | tokens=${status.tokens}`));
+    process.stdout.write(renderStatusLine(status, process.stdout.columns ?? 100, session));
     process.stdout.write("\n");
+  }
+
+  private promptInteractive(label: string): Promise<string> {
+    const input = process.stdin as NodeJS.ReadStream & { setRawMode?: (mode: boolean) => void };
+    const output = process.stdout;
+    const promptLabel = colorize("blue", label);
+    let value = "";
+    let cursor = 0;
+    let historyIndex = -1;
+    let draft = "";
+
+    this.rl.pause();
+    readline.emitKeypressEvents(input);
+    input.setRawMode?.(true);
+    input.resume();
+
+    return new Promise((resolve) => {
+      const render = () => {
+        renderPromptBlock(promptLabel, value, cursor, this.promptStatus);
+      };
+
+      const cleanup = () => {
+        input.off("keypress", onKeypress);
+        input.setRawMode?.(false);
+        this.rl.resume();
+      };
+
+      const finish = (line: string) => {
+        cleanup();
+        readline.cursorTo(output, 0);
+        readline.clearLine(output, 0);
+        output.write(`${promptLabel}${line}\n`);
+        readline.clearLine(output, 0);
+        output.write("\n");
+        readline.clearLine(output, 0);
+        output.write("\n");
+        resolve(line);
+      };
+
+      const onKeypress = (chunk: string, key: readline.Key) => {
+        if (key.ctrl && key.name === "c") {
+          finish("/exit");
+          return;
+        }
+
+        switch (key.name) {
+          case "return":
+          case "enter":
+            finish(value);
+            return;
+          case "backspace":
+            if (cursor > 0) {
+              value = `${value.slice(0, cursor - 1)}${value.slice(cursor)}`;
+              cursor -= 1;
+            }
+            break;
+          case "delete":
+            if (cursor < value.length) {
+              value = `${value.slice(0, cursor)}${value.slice(cursor + 1)}`;
+            }
+            break;
+          case "left":
+            cursor = Math.max(0, cursor - 1);
+            break;
+          case "right":
+            cursor = Math.min(value.length, cursor + 1);
+            break;
+          case "home":
+            cursor = 0;
+            break;
+          case "end":
+            cursor = value.length;
+            break;
+          case "up":
+            if (this.historyEntries.length > 0) {
+              if (historyIndex === -1) {
+                draft = value;
+              }
+              historyIndex = Math.min(this.historyEntries.length - 1, historyIndex + 1);
+              value = this.historyEntries[historyIndex] ?? value;
+              cursor = value.length;
+            }
+            break;
+          case "down":
+            if (historyIndex > 0) {
+              historyIndex -= 1;
+              value = this.historyEntries[historyIndex] ?? value;
+            } else if (historyIndex === 0) {
+              historyIndex = -1;
+              value = draft;
+            }
+            cursor = value.length;
+            break;
+          case "tab": {
+            const [hits] = completeInput(value, DEFAULT_COMMANDS);
+            if (hits.length === 1) {
+              value = hits[0] ?? value;
+              cursor = value.length;
+            }
+            break;
+          }
+          default:
+            if (chunk && !key.ctrl && !key.meta && chunk >= " ") {
+              value = `${value.slice(0, cursor)}${chunk}${value.slice(cursor)}`;
+              cursor += chunk.length;
+              historyIndex = -1;
+            }
+            break;
+        }
+
+        render();
+      };
+
+      input.on("keypress", onKeypress);
+      render();
+    });
   }
 }
 
@@ -269,6 +392,8 @@ export const internalForTesting = {
   completeInput,
   formatToolBadge,
   compactPath,
+  renderCompletionLine,
+  renderStatusLine,
   renderMarkdownToTerminal
 };
 
@@ -293,4 +418,58 @@ function compactPath(path: string, width: number): string {
   }
 
   return `...${path.slice(-(maxLength - 3))}`;
+}
+
+function renderPromptBlock(promptLabel: string, value: string, cursor: number, status: PromptStatus | undefined): void {
+  const output = process.stdout;
+  const promptLength = stripAnsi(promptLabel).length;
+  readline.cursorTo(output, 0);
+  readline.clearLine(output, 0);
+  output.write(`${promptLabel}${value}`);
+  output.write("\n");
+  readline.clearLine(output, 0);
+  output.write(renderCompletionLine(value, process.stdout.columns ?? 100));
+  output.write("\n");
+  readline.clearLine(output, 0);
+  if (status) {
+    output.write(renderStatusLine(status, process.stdout.columns ?? 100, status.sessionId.slice(0, 8)));
+  }
+  readline.moveCursor(output, 0, -2);
+  readline.cursorTo(output, promptLength + cursor);
+}
+
+function renderCompletionLine(value: string, width: number): string {
+  if (!value.startsWith("/")) {
+    return dim("Type / for commands");
+  }
+
+  const [hits] = completeInput(value, DEFAULT_COMMANDS);
+  if (hits.length === 0) {
+    return dim("No command matches");
+  }
+
+  const rendered = hits.slice(0, 8).join("  ");
+  const suffix = hits.length > 8 ? `  +${hits.length - 8} more` : "";
+  return dim(`Commands: ${truncateLine(rendered + suffix, width)}`);
+}
+
+function renderStatusLine(status: PromptStatus, width: number, session = status.sessionId.slice(0, 8)): string {
+  const cwd = compactPath(status.cwd, width);
+  const title = status.title ? ` | ${truncateLine(status.title, 28)}` : "";
+  return [
+    colorize("yellow", status.model),
+    dim(status.mode),
+    colorize("green", cwd),
+    dim(`session=${session}`),
+    dim(`tokens=${status.tokens}`),
+    dim(`turns=${status.turns}${title}`)
+  ].join("  ");
+}
+
+function truncateLine(value: string, width: number): string {
+  if (value.length <= width) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, width - 3))}...`;
 }
