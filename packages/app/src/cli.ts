@@ -9,6 +9,7 @@ import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, type PermissionDecision, type ProviderId } from "./config.js";
 import { compactSessionIfNeeded, formatSessionSummaries } from "./compaction.js";
 import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
+import { createLoggedProvider } from "./llm-logging.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
 import { createProvider, listProviderIds } from "./provider-registry.js";
@@ -29,7 +30,12 @@ async function main() {
   session = repairAndPersistSessionIfNeeded(session, store, logger);
   let model = session.model;
   let providerId = normalizeProviderId(session.provider, config.provider);
-  let provider = createProvider(config, providerId, model);
+  const buildProvider = () => createLoggedProvider(createProvider(config, providerId, model), logger, () => ({
+    sessionId: session.id,
+    providerId,
+    cwd
+  }));
+  let provider = buildProvider();
   let activeAbortController: AbortController | undefined;
   const tools = createBuiltInTools({
     cwd,
@@ -59,7 +65,20 @@ async function main() {
         continue;
       }
 
+      logger.info("user.input", {
+        sessionId: session.id,
+        provider: providerId,
+        model,
+        mode: session.mode,
+        inputKind: classifyUserInput(input),
+        input
+      });
+
       if (input === "/exit" || input === "/quit") {
+        logger.info("app.exit.requested", {
+          sessionId: session.id,
+          input
+        });
         break;
       }
 
@@ -84,20 +103,42 @@ async function main() {
         session,
         store,
         setModel(nextModel) {
+          const previousModel = model;
           model = nextModel;
-          provider = createProvider(config, providerId, model);
+          provider = buildProvider();
           syncPromptStatus(ui, session, providerId, model, cwd);
+          logger.info("session.model_changed", {
+            sessionId: session.id,
+            previousModel,
+            model
+          });
         },
         setProvider(nextProviderId) {
+          const previousProvider = providerId;
           providerId = nextProviderId;
-          provider = createProvider(config, providerId, model);
+          provider = buildProvider();
           syncPromptStatus(ui, session, providerId, model, cwd);
+          logger.info("session.provider_changed", {
+            sessionId: session.id,
+            previousProvider,
+            provider: providerId
+          });
         },
         setSession(nextSession) {
+          const previousSessionId = session.id;
           session = nextSession;
           syncPromptStatus(ui, session, providerId, model, cwd);
+          logger.info("session.changed", {
+            previousSessionId,
+            sessionId: session.id,
+            model: session.model,
+            provider: session.provider,
+            mode: session.mode,
+            title: session.title
+          });
         },
-        ui
+        ui,
+        logger
       });
 
       if (commandHandled) {
@@ -113,7 +154,10 @@ async function main() {
         sessionId: session.id,
         provider: providerId,
         model,
-        input
+        mode: session.mode,
+        input,
+        turnIndex: session.metrics.turnCount + 1,
+        messageCountBefore: session.messages.length
       });
       activeAbortController = new AbortController();
       let partialMessages = [...session.messages];
@@ -183,7 +227,18 @@ async function main() {
         }
         logger.info("turn.success", {
           sessionId: session.id,
+          provider: providerId,
+          model,
+          usage: result.usage,
+          sessionMetrics: session.metrics,
           messageCount: session.messages.length
+        });
+        logger.info("turn.metrics", {
+          sessionId: session.id,
+          provider: providerId,
+          model,
+          turnUsage: result.usage,
+          sessionMetrics: session.metrics
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -202,8 +257,10 @@ async function main() {
           syncPromptStatus(ui, session, providerId, model, cwd);
           logger.warn("turn.interrupted", {
             sessionId: session.id,
+            provider: providerId,
             model,
             input,
+            sessionMetrics: session.metrics,
             messageCount: session.messages.length
           });
           continue;
@@ -212,8 +269,11 @@ async function main() {
         session.messages.pop();
         logger.error("turn.failure", {
           sessionId: session.id,
+          provider: providerId,
           model,
+          mode: session.mode,
           input,
+          messageCountBefore: session.messages.length + 1,
           error: message
         });
         ui.warn(`Turn failed and was not saved: ${message}`);
@@ -237,6 +297,7 @@ type CommandContext = {
   setProvider: (providerId: ProviderId) => void;
   setSession: (session: StoredSession) => void;
   ui: TerminalUi;
+  logger: AppLogger;
 };
 
 type ShellShortcutContext = {
@@ -258,6 +319,8 @@ async function handleShellShortcut(input: string, context: ShellShortcutContext)
 
   context.logger.info("shell.shortcut.start", {
     sessionId: context.session.id,
+    provider: context.providerId,
+    model: context.model,
     command
   });
 
@@ -273,13 +336,18 @@ async function handleShellShortcut(input: string, context: ShellShortcutContext)
     context.ui.renderAssistantMessage(content);
     context.logger.info("shell.shortcut.success", {
       sessionId: context.session.id,
-      command
+      provider: context.providerId,
+      model: context.model,
+      command,
+      sessionMetrics: context.session.metrics
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     context.ui.warn(`Shell command failed: ${message}`);
     context.logger.error("shell.shortcut.failure", {
       sessionId: context.session.id,
+      provider: context.providerId,
+      model: context.model,
       command,
       error: message
     });
@@ -292,16 +360,32 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   }
 
   const [command, ...rest] = input.split(/\s+/);
+  context.logger.info("command.input", {
+    sessionId: context.session.id,
+    provider: context.providerId,
+    model: context.model,
+    mode: context.session.mode,
+    command,
+    args: rest,
+    raw: input
+  });
   switch (command) {
     case "/help":
       context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
+        const previousSessionId = context.session.id;
         const nextSession = context.store.create(context.model, context.cwd, context.providerId);
         context.setSession(nextSession);
         context.ui.setHistory(context.store.getUserHistory(nextSession));
         context.ui.info(`Started session ${nextSession.id}`);
+        context.logger.info("session.new", {
+          previousSessionId,
+          sessionId: nextSession.id,
+          provider: context.providerId,
+          model: context.model
+        });
       }
       return true;
     case "/resume": {
@@ -313,11 +397,20 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       }
       const loaded = context.store.load(sessionId);
       const repaired = repairAndPersistSessionIfNeeded(loaded, context.store);
+      const previousSessionId = context.session.id;
       context.setSession(repaired);
       context.setModel(repaired.model);
       context.setProvider(normalizeProviderId(repaired.provider, context.providerId));
       context.ui.setHistory(context.store.getUserHistory(repaired));
       context.ui.info(`Resumed session ${repaired.id}`);
+      context.logger.info("session.resume", {
+        previousSessionId,
+        sessionId: repaired.id,
+        provider: repaired.provider,
+        model: repaired.model,
+        mode: repaired.mode,
+        title: repaired.title
+      });
       return true;
     }
     case "/logs":
@@ -364,18 +457,36 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
         context.ui.info("Usage: /mode plan|build");
         return true;
       }
+      const previousMode = context.session.mode;
       context.session.mode = nextMode;
       context.store.save(context.session);
       context.ui.info(`Mode set to ${nextMode}`);
+      context.logger.info("session.mode_changed", {
+        sessionId: context.session.id,
+        previousMode,
+        mode: nextMode
+      });
       return true;
     }
     case "/compact": {
       const config = loadAppConfig(context.cwd);
+      context.logger.info("session.compact.requested", {
+        sessionId: context.session.id,
+        messageCount: context.session.messages.length,
+        force: true
+      });
       const result = await compactSessionIfNeeded(context.session, context.provider, context.model, config, true);
       if (result.compacted) {
         context.store.save(context.session);
       }
       context.ui.info(`Compaction: ${result.reason}`);
+      context.logger.info("session.compact.completed", {
+        sessionId: context.session.id,
+        compacted: result.compacted,
+        reason: result.reason,
+        summaryCount: context.session.summaries.length,
+        messageCount: context.session.messages.length
+      });
       return true;
     }
     case "/clear":
@@ -383,6 +494,9 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.store.save(context.session);
       context.ui.setHistory([]);
       context.ui.info(`Cleared context for session ${context.session.id}`);
+      context.logger.info("session.cleared", {
+        sessionId: context.session.id
+      });
       return true;
     case "/sessions":
       context.ui.info(formatSessionList(context.store.list()));
@@ -395,6 +509,10 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.setProvider(normalizeProviderId(forked.provider, context.providerId));
       context.ui.setHistory(context.store.getUserHistory(forked));
       context.ui.info(`Forked session ${source.id} -> ${forked.id}`);
+      context.logger.info("session.fork", {
+        sourceSessionId: source.id,
+        sessionId: forked.id
+      });
       return true;
     }
     case "/delete": {
@@ -407,7 +525,12 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
         context.ui.info("Refusing to delete the active session. Resume or create another session first.");
         return true;
       }
-      context.ui.info(context.store.delete(sessionId) ? `Deleted session ${sessionId}` : `Session not found: ${sessionId}`);
+      const deleted = context.store.delete(sessionId);
+      context.ui.info(deleted ? `Deleted session ${sessionId}` : `Session not found: ${sessionId}`);
+      context.logger.info("session.delete", {
+        sessionId,
+        deleted
+      });
       return true;
     }
     case "/export": {
@@ -420,6 +543,10 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       const targetPath = resolve(context.cwd, outputPath);
       writeFileSync(targetPath, JSON.stringify(loaded, null, 2), "utf8");
       context.ui.info(`Exported session ${sessionId} to ${targetPath}`);
+      context.logger.info("session.export", {
+        sessionId,
+        targetPath
+      });
       return true;
     }
     case "/import": {
@@ -430,10 +557,21 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       }
       const imported = context.store.import(JSON.parse(readFileSync(resolve(context.cwd, inputPath), "utf8")) as StoredSession);
       context.ui.info(`Imported session as ${imported.id}`);
+      context.logger.info("session.import", {
+        sessionId: imported.id,
+        inputPath
+      });
       return true;
     }
     case "/undo":
-      context.ui.info(undoLastSnapshot(context.session, context.store));
+      {
+        const undoMessage = undoLastSnapshot(context.session, context.store);
+        context.ui.info(undoMessage);
+        context.logger.info("session.undo", {
+          sessionId: context.session.id,
+          message: undoMessage
+        });
+      }
       return true;
     case "/session":
       context.ui.info(formatSessionSummary(context.session, context.model, context.providerId, context.cwd));
@@ -447,12 +585,33 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
     case "/verbose": {
       const enabled = context.ui.toggleVerbose();
       context.ui.info(`Verbose mode ${enabled ? "enabled" : "disabled"}.`);
+      context.logger.info("ui.verbose_changed", {
+        sessionId: context.session.id,
+        enabled
+      });
       return true;
     }
     default:
       context.ui.info(`Unknown command: ${command}`);
+      context.logger.warn("command.unknown", {
+        sessionId: context.session.id,
+        command,
+        raw: input
+      });
       return true;
   }
+}
+
+function classifyUserInput(input: string): "command" | "shell" | "chat" {
+  if (input.startsWith("/")) {
+    return "command";
+  }
+
+  if (input.startsWith("!")) {
+    return "shell";
+  }
+
+  return "chat";
 }
 
 function formatSessionSummary(session: StoredSession, model: string, providerId: ProviderId, cwd: string): string {

@@ -16,7 +16,7 @@ Zer-Agent is a terminal-first coding agent for local repository work. It combine
 - Esc interruption during a running turn. Partial context is saved so you can continue later.
 - Direct shell shortcut with `!<command>` inside the chat session.
 - Project instructions loaded from `AGENTS.md`.
-- Runtime logs under `.zer-agent/logs`.
+- Structured JSONL runtime logs under `.zer-agent/logs`, including user input, command/session changes, LLM request/response records, tool events, and token metrics.
 
 ## Requirements
 
@@ -121,6 +121,12 @@ continue from where you stopped
 Use `/clear` to clear the current session context without deleting the session file.
 
 Direct `!` commands run from the current project folder. Zer-Agent applies the same destructive-command guard used by the `run_shell` tool and stores the command output in the current session context.
+
+## Logs
+
+Use `/logs` to print the active log file path. Logs are JSONL records under `.zer-agent/logs`.
+
+Zer-Agent records app startup, every user input, slash commands, session changes, mode/model/provider changes, shell shortcuts, tool events, LLM provider requests and responses, failures, and per-turn token usage. Successful turns also write cumulative session token metrics.
 
 ## Modes
 
