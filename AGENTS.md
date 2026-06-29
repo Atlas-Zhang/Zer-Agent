@@ -30,6 +30,8 @@
 - Run `npm test` for behavior changes once the build succeeds.
 - After each feature implementation, verify the feature directly with at least one focused functional check in addition to build/test success.
 - Do not consider a feature complete until its user-visible behavior has been exercised and confirmed.
+- After each Zer-Agent app feature update, update both README documents: `README.md` for English and `README.zh-CN.md` for Chinese.
+- Keep the two README files as separate language versions; do not mix English and Chinese content in the same file except for command names, paths, and code/config examples.
 
 ## Runtime Configuration
 - Keep non-secret defaults documented in `.env`.
