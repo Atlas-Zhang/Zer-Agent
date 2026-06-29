@@ -33,6 +33,7 @@ export type StoredSession = {
   provider: string;
   model: string;
   mode: SessionMode;
+  agentProfile?: string;
   title?: string;
   cwd: string;
   createdAt: string;
@@ -62,6 +63,7 @@ export class SessionStore {
       provider,
       model,
       mode,
+      agentProfile: undefined,
       cwd,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -138,6 +140,7 @@ export class SessionStore {
       ...session,
       id: crypto.randomUUID(),
       title: session.title ? `${session.title} (fork)` : undefined,
+      agentProfile: session.agentProfile,
       createdAt: timestamp,
       updatedAt: timestamp,
       messages: [...session.messages],
@@ -194,6 +197,7 @@ export class SessionStore {
       provider: session.provider ?? "deepseek",
       model: session.model ?? "deepseek-v4-flash",
       mode: session.mode === "plan" ? "plan" : "build",
+      agentProfile: typeof session.agentProfile === "string" ? session.agentProfile : undefined,
       title: session.title,
       cwd: session.cwd ?? process.cwd(),
       createdAt: session.createdAt ?? timestamp,

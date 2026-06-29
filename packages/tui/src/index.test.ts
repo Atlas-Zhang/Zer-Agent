@@ -21,10 +21,12 @@ test("completeInput suggests command arguments", () => {
   const [modeHits] = internalForTesting.completeInput("/mode p", ["/mode"]);
   const [providerHits] = internalForTesting.completeInput("/provider open", ["/provider"]);
   const [permissionHits] = internalForTesting.completeInput("/permissions a", ["/permissions"]);
+  const [agentHits] = internalForTesting.completeInput("/agent re", ["/agent"]);
 
   assert.deepEqual(modeHits, ["/mode plan"]);
   assert.deepEqual(providerHits, ["/provider openai-compatible"]);
   assert.deepEqual(permissionHits, ["/permissions ask", "/permissions allow"]);
+  assert.deepEqual(agentHits, ["/agent review"]);
 });
 
 test("formatToolBadge wraps the tool name in brackets", () => {

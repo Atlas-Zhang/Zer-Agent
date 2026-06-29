@@ -9,6 +9,14 @@ import { TerminalUi } from "@zer-agent/tui";
 import { loadAppConfig, type PermissionDecision, type ProviderId } from "./config.js";
 import { compactSessionIfNeeded, formatSessionSummaries } from "./compaction.js";
 import { getFinalAssistantMessage, repairConversationHistory } from "./conversation.js";
+import {
+  formatModelCatalog,
+  loadAgentProfiles,
+  loadCustomCommands,
+  renderCustomCommand,
+  type AgentProfile,
+  type CustomCommand
+} from "./customization.js";
 import { createLoggedProvider } from "./llm-logging.js";
 import { AppLogger } from "./logger.js";
 import { loadAgentsInstructions } from "./project-context.js";
@@ -25,6 +33,8 @@ async function main() {
   const ui = new TerminalUi();
   const store = new SessionStore(config.sessionDir);
   const logger = new AppLogger(config.logDir);
+  const customCommands = loadCustomCommands(cwd);
+  const agentProfiles = loadAgentProfiles(cwd);
 
   let session = store.findLatestForCwd(cwd) ?? store.create(config.model, cwd, config.provider, "build", config.permissionDefault);
   session = repairAndPersistSessionIfNeeded(session, store, logger);
@@ -60,7 +70,7 @@ async function main() {
   try {
     for (;;) {
       syncPromptStatus(ui, session, providerId, model, cwd);
-      const input = (await ui.prompt()).trim();
+      let input = (await ui.prompt()).trim();
       if (!input) {
         continue;
       }
@@ -95,11 +105,31 @@ async function main() {
         continue;
       }
 
+      const customCommandInput = resolveCustomCommandInput(input, customCommands, cwd, session.id);
+      if (customCommandInput) {
+        logger.info("custom_command.expanded", {
+          sessionId: session.id,
+          command: customCommandInput.commandName,
+          input: customCommandInput.argument
+        });
+        input = customCommandInput.prompt;
+      } else if (input.startsWith("/run ")) {
+        ui.warn("Usage: /run <custom-command> [input]. No matching command was found.");
+        continue;
+      }
+
+      if (input === "/review") {
+        input = buildReviewPrompt(await readGitDiff(cwd));
+      }
+
       const commandHandled = await handleCommand(input, {
         cwd,
+        config,
         model,
         provider,
         providerId,
+        agentProfiles,
+        customCommands,
         session,
         store,
         setModel(nextModel) {
@@ -181,6 +211,7 @@ async function main() {
         const systemPrompt = [
           config.systemPrompt,
           session.mode === "plan" ? "Current mode: plan. Do not mutate files or run shell commands. Produce analysis and implementation plans only." : "Current mode: build. You may use available tools subject to permissions.",
+          resolveAgentInstructions(agentProfiles, session.agentProfile),
           config.shellContext,
           formatSessionSummaries(session),
           toolInventoryPrompt,
@@ -289,9 +320,12 @@ async function main() {
 
 type CommandContext = {
   cwd: string;
+  config: ReturnType<typeof loadAppConfig>;
   model: string;
   provider: LlmProvider;
   providerId: ProviderId;
+  agentProfiles: AgentProfile[];
+  customCommands: CustomCommand[];
   session: StoredSession;
   store: SessionStore;
   setModel: (model: string) => void;
@@ -372,7 +406,7 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
   });
   switch (command) {
     case "/help":
-      context.ui.info("Commands: /help /new /resume <id> /model <name> /provider <id> /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions [ask|allow|deny] /undo /session /tools /logs /verbose /quit");
+      context.ui.info("Commands: /help /new /resume <id> /model <name> /models /provider <id> /agent [name] /run <command> [input] /diff /review /mode <plan|build> /compact /clear /sessions /fork [id] /delete <id> /export <id> <path> /import <path> /permissions [ask|allow|deny] /undo /session /tools /logs /verbose /quit");
       return true;
     case "/new":
       {
@@ -435,6 +469,9 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
       context.ui.info(`Model set to ${nextModel}`);
       return true;
     }
+    case "/models":
+      context.ui.info(formatModelCatalog(context.config, context.model));
+      return true;
     case "/provider": {
       const nextProvider = rest[0];
       if (!nextProvider) {
@@ -473,6 +510,41 @@ async function handleCommand(input: string, context: CommandContext): Promise<bo
           permissionDefault: nextPermission
         });
       }
+      return true;
+    case "/agent": {
+      const nextAgentName = rest[0];
+      if (!nextAgentName) {
+        context.ui.info(formatAgentProfiles(context.agentProfiles, context.session.agentProfile));
+        return true;
+      }
+      const profile = context.agentProfiles.find((entry) => entry.name === nextAgentName);
+      if (!profile) {
+        context.ui.info(`Unknown agent: ${nextAgentName}\n\n${formatAgentProfiles(context.agentProfiles, context.session.agentProfile)}`);
+        return true;
+      }
+      const previousAgent = context.session.agentProfile;
+      context.session.agentProfile = profile.name;
+      if (profile.mode) {
+        context.session.mode = profile.mode;
+      }
+      if (profile.permissionDefault) {
+        context.session.permissionDefault = profile.permissionDefault;
+      }
+      context.store.save(context.session);
+      context.ui.info(`Agent set to ${profile.name}${profile.mode ? ` (mode=${profile.mode})` : ""}`);
+      context.logger.info("session.agent_changed", {
+        sessionId: context.session.id,
+        previousAgent,
+        agentProfile: profile.name,
+        mode: context.session.mode
+      });
+      return true;
+    }
+    case "/run":
+      context.ui.info(formatCustomCommands(context.customCommands));
+      return true;
+    case "/diff":
+      context.ui.info(await readGitDiff(context.cwd));
       return true;
     case "/mode": {
       const nextMode = rest[0];
@@ -651,6 +723,7 @@ function formatSessionSummary(session: StoredSession, model: string, providerId:
     `provider=${providerId}`,
     `model=${model}`,
     `mode=${session.mode}`,
+    `agent=${session.agentProfile ?? "default"}`,
     `permissions=${session.permissionDefault ?? "config"}`,
     `title=${session.title ?? "(untitled)"}`,
     `cwd=${cwd}`,
@@ -811,6 +884,76 @@ function formatPermissionSummary(defaultDecision: PermissionDecision, configDefa
     "Risky categories: write, shell, network",
     "Use /permissions ask|allow|deny to change this session.",
     "Set ZER_AGENT_PERMISSION_DEFAULT=allow|ask|deny to change the config default."
+  ].join("\n");
+}
+
+function resolveCustomCommandInput(
+  input: string,
+  commands: CustomCommand[],
+  cwd: string,
+  sessionId: string
+): { commandName: string; argument: string; prompt: string } | undefined {
+  const match = input.match(/^\/(?:(run)\s+)?([A-Za-z0-9_-]+)(?:\s+(.*))?$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const commandName = match[2] ?? "";
+  const command = commands.find((entry) => entry.name === commandName);
+  if (!command) {
+    return undefined;
+  }
+
+  const argument = match[3] ?? "";
+  return {
+    commandName,
+    argument,
+    prompt: renderCustomCommand(command, argument, cwd, sessionId)
+  };
+}
+
+function resolveAgentInstructions(profiles: AgentProfile[], activeName: string | undefined): string | undefined {
+  const profile = profiles.find((entry) => entry.name === activeName);
+  return profile ? `Active agent profile: ${profile.name}\n${profile.instructions}` : undefined;
+}
+
+function formatAgentProfiles(profiles: AgentProfile[], activeName: string | undefined): string {
+  if (profiles.length === 0) {
+    return "No agent profiles found.";
+  }
+
+  return profiles
+    .map((profile) => `${profile.name === activeName ? "*" : " "} ${profile.name}: ${profile.description}`)
+    .join("\n");
+}
+
+function formatCustomCommands(commands: CustomCommand[]): string {
+  if (commands.length === 0) {
+    return "No custom commands found. Add Markdown files under .zer-agent/commands.";
+  }
+
+  return commands
+    .map((command) => `/${command.name}: ${command.description ?? "Custom command"}`)
+    .join("\n");
+}
+
+async function readGitDiff(cwd: string): Promise<string> {
+  const separator = process.platform === "win32" ? ";" : "&&";
+  const result = await executeShellCommand(cwd, `git diff --stat ${separator} git diff -- .`);
+  return result.content;
+}
+
+function buildReviewPrompt(diff: string): string {
+  if (!diff.trim() || diff.trim() === "(no output)") {
+    return "No working tree diff is available to review.";
+  }
+
+  return [
+    "Review the current working tree diff. Focus on bugs, regressions, missing tests, and risky behavior.",
+    "",
+    "```diff",
+    diff,
+    "```"
   ].join("\n");
 }
 

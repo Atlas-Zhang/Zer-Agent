@@ -40,6 +40,7 @@ test("createBuiltInTools only registers external search tools when configured", 
   const baseConfig: AppConfig = {
     provider: "deepseek",
     model: "deepseek-v4-flash",
+    models: [{ id: "deepseek-v4-flash", provider: "deepseek" }],
     sessionDir: "sessions",
     logDir: "logs",
     maxIterations: 8,
@@ -100,6 +101,7 @@ test("edit_file preview returns diff without mutating", async () => {
       config: {
         provider: "deepseek",
         model: "deepseek-v4-flash",
+        models: [{ id: "deepseek-v4-flash", provider: "deepseek" }],
         sessionDir: "sessions",
         logDir: "logs",
         maxIterations: 8,

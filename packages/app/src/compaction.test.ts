@@ -25,6 +25,7 @@ test("compactSessionIfNeeded summarizes older messages and keeps recent messages
     const config: AppConfig = {
       provider: "deepseek",
       model: "model",
+      models: [{ id: "model", provider: "deepseek" }],
       sessionDir: root,
       logDir: root,
       maxIterations: 8,

@@ -11,6 +11,8 @@ Zer-Agent is a terminal-first coding agent for local repository work. It combine
 - Preview-first file mutation with diffs, snapshots, and `/undo`.
 - Persistent sessions with auto-resume by working directory.
 - Session commands for list, resume, fork, export, import, delete, compact, clear, and status.
+- Custom project commands from `.zer-agent/commands` and switchable agent profiles from `.zer-agent/agents`.
+- Model catalog display with `/models`.
 - Plan/build modes. Plan mode keeps the agent read-only for implementation planning.
 - Context compaction for long sessions.
 - Esc interruption during a running turn. Partial context is saved so you can continue later.
@@ -98,8 +100,13 @@ Type `/` to see live command suggestions. Common commands:
 /resume <session-id>
 /new
 /model <model-name>
+/models
 /provider deepseek
 /provider openai-compatible
+/agent [name]
+/run <custom-command> [input]
+/diff
+/review
 /mode plan
 /mode build
 /tools
@@ -121,6 +128,16 @@ continue from where you stopped
 Use `/clear` to clear the current session context without deleting the session file.
 
 Direct `!` commands run from the current project folder. Zer-Agent applies the same destructive-command guard used by the `run_shell` tool and stores the command output in the current session context.
+
+## Customization
+
+Add custom prompt commands as Markdown files under `.zer-agent/commands`. A file named `.zer-agent/commands/fix.md` is available as `/fix <input>` and `/run fix <input>`. Templates can use `{input}`, `{cwd}`, and `{session}`.
+
+Add project agent profiles as Markdown files under `.zer-agent/agents`. Use `/agent` to list profiles and `/agent <name>` to activate one. Built-in profiles include `build`, `plan`, `review`, `debug`, `test`, and `docs`.
+
+Use `/models` to list configured model choices. Additional models can be added in `.zer-agent/config.json` with a `models` array containing `{ "id": "...", "provider": "deepseek" }` or `{ "id": "...", "provider": "openai-compatible" }`.
+
+Use `/diff` to print the current working tree diff, and `/review` to ask the active model to review that diff.
 
 ## Logs
 
