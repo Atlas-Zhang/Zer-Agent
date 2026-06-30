@@ -21,6 +21,58 @@ Zer-Agent is a terminal-first coding agent for local repository work. It combine
 - Project instructions loaded from `AGENTS.md`.
 - Structured JSONL runtime logs under `.zer-agent/logs`, including user input, command/session changes, LLM request/response records, tool events, and token metrics.
 
+## Architecture
+
+Zer-Agent is split into small packages so provider code, agent orchestration, terminal UI, and app wiring can evolve independently.
+
+| Package | Responsibility |
+| --- | --- |
+| `packages/llm-core` | LLM provider abstraction, DeepSeek/OpenAI-compatible request serialization, tool-call normalization, token usage mapping. |
+| `packages/agent-core` | Agent loop, tool-call lifecycle, tool result handling, final-answer recovery, and turn usage aggregation. |
+| `packages/tui` | Terminal prompt, command completion, status line, colors, progress rendering, and Markdown display. |
+| `packages/app` | CLI entrypoint, config loading, sessions, built-in tools, MCP tool integration, permissions, logging, commands, and project context. |
+
+```mermaid
+flowchart TB
+  User[User / Terminal] --> TUI[packages/tui<br/>Prompt, status line, Markdown rendering]
+  TUI --> App[packages/app<br/>CLI orchestration, config, commands]
+  App --> Agent[packages/agent-core<br/>Agent loop and tool events]
+  Agent --> LLM[packages/llm-core<br/>Provider abstraction]
+  LLM --> Providers[DeepSeek / OpenAI-compatible APIs]
+
+  Agent --> BuiltInTools[Built-in Tools<br/>files, search, shell, git, weather, news, TypeScript symbols]
+  App --> MCP[MCP stdio Servers<br/>external tools]
+  App --> State[.zer-agent local state<br/>sessions, logs, config, commands, agents]
+  BuiltInTools --> LocalSystem[Local repository<br/>filesystem, shell, git]
+  BuiltInTools --> ExternalServices[External APIs<br/>Tavily, GNews, Open-Meteo]
+```
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant TUI
+  participant CLI
+  participant Agent
+  participant LLM
+  participant Tool
+  participant Store
+
+  User->>TUI: Enter prompt or slash command
+  TUI->>CLI: Input text
+  CLI->>CLI: Load session, mode, profile, config, tools
+  CLI->>Agent: Messages + system prompt + tool schemas
+  Agent->>LLM: Chat completion request
+  LLM-->>Agent: Assistant message or tool call
+  Agent->>CLI: Request tool authorization
+  CLI-->>Agent: Allow, ask, or deny
+  Agent->>Tool: Execute built-in or MCP tool
+  Tool-->>Agent: Tool result
+  Agent->>LLM: Continue with tool result
+  LLM-->>Agent: Final answer
+  CLI->>Store: Save session, metrics, snapshots, logs
+  CLI->>TUI: Render final answer
+```
+
 ## Requirements
 
 - Node.js 22 or newer
